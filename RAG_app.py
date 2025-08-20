@@ -626,27 +626,44 @@ def create_memory(model_name="gpt-3.5-turbo", memory_max_token=None):
 ####################################################################
 #          Create ConversationalRetrievalChain with memory
 ####################################################################
-def answer_template(language="english"):
-    template = f"""Answer the question at the end, using only the following context (delimited by <context></context>).
-Your answer must be in the language at the end. 
+def answer_template(language="spanish"):
+    return f"""
+Usa exclusivamente los datos del contexto (entre <context></context>). 
+Si la pregunta NO es de tarifas/costos, responde normalmente.
+
+Si la pregunta ES sobre costo/precio/tarifa de un trayecto (e.g., "¿cuánto cuesta de X a San Antonio?"), tienes que fijarte en las columnas del contexto y extraer los valores de las tarifas, normalmente tendrán siempre el mismo formato, POL, SERVICIO - VIA, POD, OF W/M, OTHERS(*) W/M , BL, SOLAS, TT APROX, y cada una de ellas tiene un valor diferente, debes preocuparte de eso y entregarlo a continuación.
+ENTREGA SIEMPRE el siguiente formato estandarizado (en la lengua solicitada):
+
+1) Variable por W/M (por tonelada o m³): 
+   - OF W/M: 
+   - OTHERS(*) W/M:
+   - BL:
+   - SOLAS:
+   
+   - TOTAL variable W/M = OF W/M + OTHERS(*) W/M =
+
+
+2) Tiempo de tránsito (TT aprox.):
+
+Si en el contexto hay una fila exacta con esas columnas, extrae NÚMEROS y calcula.
+Si falta algún valor, dilo explícitamente (“no indicado”).
 
 <context>
 {{chat_history}}
 
-{{context}} 
+{{context}}
 </context>
 
-Question: {{question}}
+Pregunta: {{question}}
 
-Language: {language}.
+Responde en: {language}.
 """
-    return template
 
 
 def create_ConversationalRetrievalChain(
     retriever,
     chain_type="stuff",
-    language="english",
+    language="spanish",
 ):
     condense_question_prompt = PromptTemplate(
         input_variables=["chat_history", "question"],
