@@ -320,28 +320,27 @@ FORMATO DE RESPUESTA OBLIGATORIO:
 
 🚢 **TARIFA PARA RUTA:** [Origen] ➜ [Destino]
 
-💰 **COSTOS POR W/M (por tonelada o m³):**
-   • **OF W/M:** [valor exacto del contexto]
-   • **OTHERS(*) W/M:** [valor exacto del contexto]  
-   • **BL:** [valor exacto del contexto]
-   • **SOLAS:** [valor exacto del contexto]
+💰 **COSTOS POR W/M (por tonelada o m³):**\n
+• **OF W/M:** [valor exacto del contexto]\n
+• **OTHERS(*) W/M:** [valor exacto del contexto]\n
+• **BL:** [valor exacto del contexto]\n
+• **SOLAS:** [valor exacto del contexto]\n
 
-📊 **TOTAL VARIABLE W/M:** USD [sumar OF W/M + OTHERS(*) W/M]
+📊 **TOTAL VARIABLE W/M:** USD [OF W/M + OTHERS(*) W/M]
 
 ⏱️ **TIEMPO DE TRÁNSITO:** [valor del contexto]
 
 🛤️ **SERVICIO/VÍA:** [valor del contexto]
 
+📦 **Cálculo para [X] toneladas:**  
+Costo total = (X * (OF W/M + OTHERS(*) W/M)) + BL + SOLAS = [resultado en USD]
+
 PROCESO DE BÚSQUEDA:
 1. Identifica los puertos de origen y destino en la pregunta
 2. Busca en el contexto la sección que contiene "ORIGEN: [puerto]" y "DESTINO: [puerto]" que coincidan
 3. De esa sección, extrae los valores de "TARIFAS EN USD POR W/M"
-4. Presenta la información en el formato especificado
-
-EJEMPLO DE BÚSQUEDA:
-Si el usuario pregunta "¿Cuánto cuesta de Canoas a San Antonio?":
-- Buscar en el contexto: "ORIGEN: CANOAS" Y "DESTINO: SAN ANTONIO"
-- Extraer los valores de la sección "TARIFAS EN USD POR W/M"
+4. Calcula el costo total multiplicando el valor variable por la cantidad de toneladas/m³, y **SIEMPRE** suma BL y SOLAS (aunque alguno sea cero).
+5. Presenta la información en el formato especificado
 
 Si NO encuentras coincidencias exactas, responde:
 "❌ No encontré información para la ruta [origen] → [destino] en la base de datos actual."
