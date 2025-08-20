@@ -1,25 +1,24 @@
-####################################################################
-#                         import
-####################################################################
-
 import warnings
-
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-import os, glob
+import os
+import glob
+import pandas as pd
 from pathlib import Path
+from dotenv import load_dotenv
+import re
+from typing import List, Dict, Any
 
-# Import openai and google_genai as main LLM services
+# Load environment variables
+load_dotenv()
+
+# Import openai as main LLM service
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # langchain prompts, memory, chains...
 from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory, ConversationSummaryBufferMemory
-
-from langchain.schema import format_document
+from langchain.memory import ConversationBufferMemory
 
 # document loaders
 from langchain_community.document_loaders import (
@@ -31,787 +30,942 @@ from langchain_community.document_loaders import (
 )
 
 # text_splitter
-from langchain.text_splitter import (
-    RecursiveCharacterTextSplitter,
-    CharacterTextSplitter,
-)
-
-# OutputParser
-from langchain_core.output_parsers import StrOutputParser
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Import chroma as the vector store
 from langchain_community.vectorstores import Chroma
-
-# Contextual_compression
-from langchain.retrievers.document_compressors import DocumentCompressorPipeline
-from langchain_community.document_transformers import (
-    EmbeddingsRedundantFilter,
-    LongContextReorder,
-)
-from langchain.retrievers.document_compressors import EmbeddingsFilter
-from langchain.retrievers import ContextualCompressionRetriever
-
-# Cohere
-from langchain.retrievers.document_compressors import CohereRerank
-from langchain_community.llms import Cohere
-
-# HuggingFace
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
-from langchain_community.llms import HuggingFaceHub
 
 # Import streamlit
 import streamlit as st
 
 ####################################################################
-#              Config: LLM services, assistant language,...
+#              Config Mejorado
 ####################################################################
-list_LLM_providers = [
-    ":rainbow[**OpenAI**]",
-    "**Google Generative AI**",
-    ":hugging_face: **HuggingFace**",
-]
 
-dict_welcome_message = {
-    "english": "How can I assist you today?",
-    "french": "Comment puis-je vous aider aujourd’hui ?",
-    "spanish": "¿Cómo puedo ayudarle hoy?",
-    "german": "Wie kann ich Ihnen heute helfen?",
-    "russian": "Чем я могу помочь вам сегодня?",
-    "chinese": "我今天能帮你什么？",
-    "arabic": "كيف يمكنني مساعدتك اليوم؟",
-    "portuguese": "Como posso ajudá-lo hoje?",
-    "italian": "Come posso assistervi heute?",
-    "Japanese": "今日はどのようなご用件でしょうか?",
-}
+# Get OpenAI API key from environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-list_retriever_types = [
-    "Cohere reranker",
-    "Contextual compression",
-    "Vectorstore backed retriever",
+# Assistant language fixed to Spanish
+ASSISTANT_LANGUAGE = "spanish"
+WELCOME_MESSAGE = "¿Cómo puedo ayudarle hoy? Estoy especializado en consultas de tarifas de shipping."
+
+# Available OpenAI models (priorizando precisión para tarifas)
+OPENAI_MODELS = [
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-4-turbo-preview",
+    "gpt-3.5-turbo-0125",
+    "gpt-3.5-turbo",
 ]
 
 # Rutas base
 TMP_DIR = Path(__file__).resolve().parent.joinpath("data", "tmp")
 LOCAL_VECTOR_STORE_DIR = Path(__file__).resolve().parent.joinpath("data", "vector_stores")
 
-# 👉 Asegurar que existan los directorios base al iniciar
+# Asegurar que existan los directorios base al iniciar
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 ####################################################################
-#            Create app interface with streamlit
+#            MEJORAS: Procesamiento Especializado para CSVs
 ####################################################################
-st.set_page_config(page_title="Chat With Your Data")
-st.title("🤖 RAG chatbot")
 
-# API keys (estado inicial)
-st.session_state.openai_api_key = ""
-st.session_state.google_api_key = ""
-st.session_state.cohere_api_key = ""
-st.session_state.hf_api_key = ""
+class ShippingTariffProcessor:
+    """Procesador especializado para tarifas de shipping"""
+    
+    def __init__(self):
+        self.port_aliases = {
+            'miami': ['miami', 'mia', 'miami usa', 'miami us'],
+            'san antonio': ['san antonio', 'san antonio chile', 'valparaiso', 'sap', 'san antonio - chile'],
+            'callao': ['callao', 'callao peru', 'lim', 'lima'],
+            'guayaquil': ['guayaquil', 'guayaquil ecuador', 'gye'],
+            'santos': ['santos', 'santos brasil', 'sao paulo'],
+            'cartagena': ['cartagena', 'cartagena colombia', 'ctg'],
+            'puerto cabello': ['puerto cabello', 'venezuela', 'pcb'],
+            'buenaventura': ['buenaventura', 'colombia', 'bun'],
+            'canoas': ['canoas', 'canoas brasil', 'brazil'],
+            'rio de janeiro': ['rio de janeiro', 'rio', 'brasil'],
+            'curitiba': ['curitiba', 'brasil'],
+            'itajai': ['itajai', 'brasil'],
+            'manzanillo': ['manzanillo', 'mexico', 'manzanillo mx'],
+            'new york': ['new york', 'ny', 'nueva york'],
+            'chicago': ['chicago', 'chi'],
+            'houston': ['houston', 'hou'],
+            'atlanta': ['atlanta', 'atl'],
+            'baltimore': ['baltimore', 'bal'],
+            'boston': ['boston', 'bos'],
+            'detroit': ['detroit', 'det'],
+        }
+    
+    def normalize_port_name(self, port: str) -> str:
+        """Normaliza nombres de puertos para mejor matching"""
+        if not port:
+            return ""
+        
+        port_lower = port.lower().strip()
+        for canonical, aliases in self.port_aliases.items():
+            if any(alias in port_lower for alias in aliases):
+                return canonical
+        return port_lower
+    
+    def extract_numeric_value(self, value_str: str) -> str:
+        """Extrae valores numéricos de strings, manteniendo formato original si es válido"""
+        if pd.isna(value_str) or value_str in ['', 'nan', 'NaN']:
+            return "no especificado"
+        
+        value_str = str(value_str).strip()
+        # Buscar patrones numéricos
+        numeric_match = re.search(r'\d+(?:\.\d+)?', value_str)
+        if numeric_match:
+            return value_str  # Retornar el string original si contiene números
+        return "no especificado"
 
-
-def expander_model_parameters(
-    LLM_provider="OpenAI",
-    text_input_API_key="OpenAI API Key - [Get an API key](https://platform.openai.com/account/api-keys)",
-    list_models=["gpt-3.5-turbo-0125", "gpt-3.5-turbo", "gpt-4-turbo-preview"],
-):
-    """Add a text_input (for API key) and a streamlit expander containing models and parameters."""
-    st.session_state.LLM_provider = LLM_provider
-
-    if LLM_provider == "OpenAI":
-        st.session_state.openai_api_key = st.text_input(
-            text_input_API_key,
-            type="password",
-            placeholder="insert your API key",
-        )
-        st.session_state.google_api_key = ""
-        st.session_state.hf_api_key = ""
-
-    if LLM_provider == "Google":
-        st.session_state.google_api_key = st.text_input(
-            text_input_API_key,
-            type="password",
-            placeholder="insert your API key",
-        )
-        st.session_state.openai_api_key = ""
-        st.session_state.hf_api_key = ""
-
-    if LLM_provider == "HuggingFace":
-        st.session_state.hf_api_key = st.text_input(
-            text_input_API_key,
-            type="password",
-            placeholder="insert your API key",
-        )
-        st.session_state.openai_api_key = ""
-        st.session_state.google_api_key = ""
-
-    with st.expander("**Models and parameters**"):
-        st.session_state.selected_model = st.selectbox(
-            f"Choose {LLM_provider} model", list_models
-        )
-        st.session_state.temperature = st.slider(
-            "temperature", min_value=0.0, max_value=1.0, value=0.5, step=0.1
-        )
-        st.session_state.top_p = st.slider(
-            "top_p", min_value=0.0, max_value=1.0, value=0.95, step=0.05
-        )
-
-
-def sidebar_and_documentChooser():
-    """UI: (1) crear vectorstore, (2) abrir vectorstore guardado (sin tkinter)."""
-    with st.sidebar:
-        st.caption(
-            "🚀 A retrieval augmented generation chatbot powered by 🔗 LangChain, Cohere, OpenAI, Google Generative AI and 🤗"
-        )
-        st.write("")
-        llm_chooser = st.radio(
-            "Select provider",
-            list_LLM_providers,
-            captions=[
-                "[OpenAI pricing page](https://openai.com/pricing)",
-                "Rate limit: 60 requests per minute.",
-                "**Free access.**",
-            ],
-        )
-
-        st.divider()
-        if llm_chooser == list_LLM_providers[0]:
-            expander_model_parameters(
-                LLM_provider="OpenAI",
-                text_input_API_key="OpenAI API Key - [Get an API key](https://platform.openai.com/account/api-keys)",
-                list_models=[
-                    "gpt-3.5-turbo-0125",
-                    "gpt-3.5-turbo",
-                    "gpt-4-turbo-preview",
-                ],
-            )
-        if llm_chooser == list_LLM_providers[1]:
-            expander_model_parameters(
-                LLM_provider="Google",
-                text_input_API_key="Google API Key - [Get an API key](https://makersuite.google.com/app/apikey)",
-                list_models=["gemini-pro"],
-            )
-        if llm_chooser == list_LLM_providers[2]:
-            expander_model_parameters(
-                LLM_provider="HuggingFace",
-                text_input_API_key="HuggingFace API key - [Get an API key](https://huggingface.co/settings/tokens)",
-                list_models=["mistralai/Mistral-7B-Instruct-v0.2"],
-            )
-
-        st.write("")
-        st.session_state.assistant_language = st.selectbox(
-            "Assistant language", list(dict_welcome_message.keys())
-        )
-
-        st.divider()
-        st.subheader("Retrievers")
-        retrievers = list_retriever_types
-        if st.session_state.selected_model == "gpt-3.5-turbo":
-            # para gpt-3.5, evitamos el retriever base por tokens
-            retrievers = list_retriever_types[:-1]
-        st.session_state.retriever_type = st.selectbox("Select retriever type", retrievers)
-        if st.session_state.retriever_type == list_retriever_types[0]:
-            st.session_state.cohere_api_key = st.text_input(
-                "Cohere API Key - [Get an API key](https://dashboard.cohere.com/api-keys)",
-                type="password",
-                placeholder="insert your API key",
-            )
-
-        st.write("\n\n")
-        st.write(
-            f"ℹ _Your {st.session_state.LLM_provider} API key, '{st.session_state.selected_model}' parameters, "
-            f"and {st.session_state.retriever_type} are only considered when loading or creating a vectorstore._"
-        )
-
-    tab_new_vectorstore, tab_open_vectorstore = st.tabs(
-        ["Create a new Vectorstore", "Open a saved Vectorstore"]
-    )
-
-    # ---------- Tab 1: Crear vectorstore ----------
-    with tab_new_vectorstore:
-        st.session_state.uploaded_file_list = st.file_uploader(
-            label="**Select documents**",
-            accept_multiple_files=True,
-            type=(["pdf", "txt", "docx", "csv"]),
-        )
-        st.session_state.vector_store_name = st.text_input(
-            label=(
-                "**Documents will be loaded, embedded and ingested into a vectorstore (Chroma dB). "
-                "Please provide a valid dB name.**"
-            ),
-            placeholder="Vectorstore name",
-        )
-        st.button("Create Vectorstore", on_click=chain_RAG_blocks)
-        try:
-            if st.session_state.error_message != "":
-                st.warning(st.session_state.error_message)
-        except:
-            pass
-
-    # ---------- Tab 2: Abrir vectorstore existente ----------
-    with tab_open_vectorstore:
-        st.write(
-            "Please select a Vectorstore directory (inside `data/vector_stores`) or paste a custom path."
-        )
-
-        # asegurar existencia y listar disponibles
-        LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
-        available_vectorstores = [
-            f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() if f.is_dir()
-        ]
-
-        st.session_state.selected_vectorstore_name = st.selectbox(
-            "Choose a vectorstore",
-            options=[""] + available_vectorstores,
-            help="Vectorstores detectados en la carpeta local.",
-        )
-
-        custom_vectorstore_path = st.text_input(
-            "Or paste a full path to a vectorstore",
-            value="",
-            placeholder="/absolute/path/to/your/vectorstore",
-            help="Opcional: pega aquí una ruta absoluta si no está en la lista.",
-        )
-
-        if st.button("Load Vectorstore"):
-            error_messages = []
-            if (
-                not st.session_state.openai_api_key
-                and not st.session_state.google_api_key
-                and not st.session_state.hf_api_key
-            ):
-                error_messages.append(
-                    f"insert your {st.session_state.LLM_provider} API key"
-                )
-            if (
-                st.session_state.retriever_type == list_retriever_types[0]
-                and not st.session_state.cohere_api_key
-            ):
-                error_messages.append("insert your Cohere API key")
-
-            # resolver ruta
-            selected_vectorstore_path = None
-            if st.session_state.selected_vectorstore_name:
-                selected_vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
-            elif custom_vectorstore_path.strip():
-                selected_vectorstore_path = Path(custom_vectorstore_path.strip())
-
-            if not selected_vectorstore_path or not selected_vectorstore_path.exists():
-                error_messages.append("select a valid vectorstore path")
-
-            if len(error_messages) == 1:
-                st.session_state.error_message = "Please " + error_messages[0] + "."
-                st.warning(st.session_state.error_message)
-            elif len(error_messages) > 1:
-                st.session_state.error_message = (
-                    "Please "
-                    + ", ".join(error_messages[:-1])
-                    + ", and "
-                    + error_messages[-1]
-                    + "."
-                )
-                st.warning(st.session_state.error_message)
-            else:
-                with st.spinner("Loading vectorstore..."):
-                    try:
-                        embeddings = select_embeddings_model()
-                        st.session_state.vector_store = Chroma(
-                            embedding_function=embeddings,
-                            persist_directory=selected_vectorstore_path.as_posix(),
-                        )
-                        st.session_state.retriever = create_retriever(
-                            vector_store=st.session_state.vector_store,
-                            embeddings=embeddings,
-                            retriever_type=st.session_state.retriever_type,
-                            base_retriever_search_type="similarity",
-                            base_retriever_k=16,
-                            compression_retriever_k=20,
-                            cohere_api_key=st.session_state.cohere_api_key,
-                            cohere_model="rerank-multilingual-v2.0",
-                            cohere_top_n=10,
-                        )
-                        (
-                            st.session_state.chain,
-                            st.session_state.memory,
-                        ) = create_ConversationalRetrievalChain(
-                            retriever=st.session_state.retriever,
-                            chain_type="stuff",
-                            language=st.session_state.assistant_language,
-                        )
-                        clear_chat_history()
-                        st.session_state.selected_vectorstore_name = selected_vectorstore_path.name
-                        st.info(f"**{st.session_state.selected_vectorstore_name}** is loaded successfully.")
-                    except Exception as e:
-                        st.error(e)
-
-
-####################################################################
-#        Process documents and create vectorstore (Chroma dB)
-####################################################################
-def delte_temp_files():
-    """delete files from the './data/tmp' folder"""
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    files = glob.glob(TMP_DIR.as_posix() + "/*")
-    for f in files:
-        try:
-            os.remove(f)
-        except:
-            pass
-
-
-def langchain_document_loader():
-    """
-    Create document loaders for PDF, TXT, CSV, DOCX.
-    """
+def enhanced_csv_loader_documents():
+    """Cargador mejorado de CSV que crea documentos LangChain estructurados"""
     documents = []
+    csv_files = glob.glob(TMP_DIR.as_posix() + "/**/*.csv", recursive=True)
+    
+    processor = ShippingTariffProcessor()
+    
+    for csv_file in csv_files:
+        try:
+            # Leer CSV con múltiples encodings
+            df = None
+            encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+            
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(csv_file, encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if df is None:
+                st.warning(f"No se pudo leer el archivo {csv_file}")
+                continue
+            
+            # CRÍTICO: Limpiar nombres de columnas eliminando espacios
+            df.columns = df.columns.str.strip()
+            
+            # Mapear nombres de columnas que pueden tener variaciones
+            column_mapping = {}
+            for col in df.columns:
+                clean_col = col.strip().upper()
+                if 'OF W/M' in clean_col:
+                    column_mapping[col] = 'OF_WM'
+                elif 'OTHERS' in clean_col and 'W/M' in clean_col:
+                    column_mapping[col] = 'OTHERS_WM'
+                elif 'BL' in clean_col and len(clean_col.strip()) <= 5:
+                    column_mapping[col] = 'BL'
+                elif 'SOLAS' in clean_col:
+                    column_mapping[col] = 'SOLAS'
+                elif 'POL' in clean_col:
+                    column_mapping[col] = 'POL'
+                elif 'POD' in clean_col:
+                    column_mapping[col] = 'POD'
+                elif 'SERVICIO' in clean_col or 'VIA' in clean_col:
+                    column_mapping[col] = 'SERVICIO_VIA'
+                elif 'TT' in clean_col or 'APROX' in clean_col:
+                    column_mapping[col] = 'TT_APROX'
+            
+            # Renombrar columnas
+            df = df.rename(columns=column_mapping)
+            
+            # Debug: mostrar columnas mapeadas
+            st.info(f"Columnas procesadas en {Path(csv_file).name}: {list(df.columns)}")
+            
+            # Procesar cada fila
+            for idx, row in df.iterrows():
+                # Extraer valores de forma segura con los nuevos nombres
+                pol = str(row.get('POL', '')).strip()
+                pod = str(row.get('POD', '')).strip()
+                servicio = str(row.get('SERVICIO_VIA', '')).strip()
+                of_wm = processor.extract_numeric_value(row.get('OF_WM', ''))
+                others_wm = processor.extract_numeric_value(row.get('OTHERS_WM', ''))
+                bl = processor.extract_numeric_value(row.get('BL', ''))
+                solas = processor.extract_numeric_value(row.get('SOLAS', ''))
+                tt_aprox = str(row.get('TT_APROX', '')).strip()
+                
+                # Crear contenido estructurado optimizado para búsqueda
+                content = f"""RUTA DE SHIPPING #{idx + 1}
 
-    txt_loader = DirectoryLoader(
-        TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
-    )
-    documents.extend(txt_loader.load())
+=== INFORMACIÓN PRINCIPAL ===
+ORIGEN: {pol}
+DESTINO: {pod}
+SERVICIO: {servicio}
 
-    pdf_loader = DirectoryLoader(
-        TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
-    )
-    documents.extend(pdf_loader.load())
+=== TARIFAS EN USD POR W/M ===
+OF W/M: {of_wm}
+OTHERS(*) W/M: {others_wm}
+BL: {bl}
+SOLAS: {solas}
 
-    csv_loader = DirectoryLoader(
-        TMP_DIR.as_posix(),
-        glob="**/*.csv",
-        loader_cls=CSVLoader,
-        show_progress=True,
-        loader_kwargs={"encoding": "utf8"},
-    )
-    documents.extend(csv_loader.load())
+=== TIEMPO Y SERVICIO ===
+TIEMPO DE TRÁNSITO: {tt_aprox}
+VÍA: {servicio}
 
-    doc_loader = DirectoryLoader(
-        TMP_DIR.as_posix(),
-        glob="**/*.docx",
-        loader_cls=Docx2txtLoader,
-        show_progress=True,
-    )
-    documents.extend(doc_loader.load())
+=== BÚSQUEDA OPTIMIZADA ===
+RUTA: {pol} a {pod}
+RUTA NORMALIZADA: {processor.normalize_port_name(pol)} a {processor.normalize_port_name(pod)}
+VÍA NORMALIZADA: {processor.normalize_port_name(servicio)}
+
+=== DATOS COMPLETOS ===
+{row.to_string()}
+
+PALABRAS CLAVE: {pol.lower()} {pod.lower()} {servicio.lower()} tarifa costo precio shipping marítimo
+"""
+                
+                # Crear documento LangChain
+                from langchain.docstore.document import Document
+                doc = Document(
+                    page_content=content,
+                    metadata={
+                        "source": csv_file,
+                        "row_number": idx + 1,
+                        "pol": pol,
+                        "pod": pod,
+                        "pol_normalized": processor.normalize_port_name(pol),
+                        "pod_normalized": processor.normalize_port_name(pod),
+                        "servicio": servicio,
+                        "of_wm": of_wm,
+                        "others_wm": others_wm,
+                        "bl": bl,
+                        "solas": solas,
+                        "tt_aprox": tt_aprox,
+                        "content_type": "shipping_tariff",
+                        "route_key": f"{pol.lower()}_to_{pod.lower()}"
+                    }
+                )
+                documents.append(doc)
+                
+        except Exception as e:
+            st.warning(f"Error procesando {csv_file}: {str(e)}")
+    
     return documents
 
+####################################################################
+#        Cargador de documentos mejorado
+####################################################################
 
-def split_documents_to_chunks(documents):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1600, chunk_overlap=200)
-    chunks = text_splitter.split_documents(documents)
-    return chunks
-
-
-def select_embeddings_model():
-    """Select embeddings model based on provider."""
-    if st.session_state.LLM_provider == "OpenAI":
-        embeddings = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)
-    if st.session_state.LLM_provider == "Google":
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001", google_api_key=st.session_state.google_api_key
+def enhanced_langchain_document_loader():
+    """Cargador mejorado que integra CSV especializado con otros documentos"""
+    documents = []
+    
+    # Cargar documentos tradicionales
+    try:
+        txt_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
         )
-    if st.session_state.LLM_provider == "HuggingFace":
-        embeddings = HuggingFaceInferenceAPIEmbeddings(
-            api_key=st.session_state.hf_api_key, model_name="thenlper/gte-large"
+        documents.extend(txt_loader.load())
+    except:
+        pass
+    
+    try:
+        pdf_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
         )
-    return embeddings
-
-
-def create_retriever(
-    vector_store,
-    embeddings,
-    retriever_type="Contextual compression",
-    base_retriever_search_type="similarity",
-    base_retriever_k=16,
-    compression_retriever_k=20,
-    cohere_api_key="",
-    cohere_model="rerank-multilingual-v2.0",
-    cohere_top_n=10,
-):
-    """
-    Build the selected retriever on top of Chroma.
-    """
-    base_retriever = Vectorstore_backed_retriever(
-        vectorstore=vector_store,
-        search_type=base_retriever_search_type,
-        k=base_retriever_k,
-        score_threshold=None,
-    )
-
-    if retriever_type == "Vectorstore backed retriever":
-        return base_retriever
-    elif retriever_type == "Contextual compression":
-        compression_retriever = create_compression_retriever(
-            embeddings=embeddings, base_retriever=base_retriever, k=compression_retriever_k
+        documents.extend(pdf_loader.load())
+    except:
+        pass
+    
+    try:
+        doc_loader = DirectoryLoader(
+            TMP_DIR.as_posix(),
+            glob="**/*.docx",
+            loader_cls=Docx2txtLoader,
+            show_progress=True,
         )
-        return compression_retriever
-    elif retriever_type == "Cohere reranker":
-        cohere_retriever = CohereRerank_retriever(
-            base_retriever=base_retriever,
-            cohere_api_key=cohere_api_key,
-            cohere_model=cohere_model,
-            top_n=cohere_top_n,
-        )
-        return cohere_retriever
-    else:
-        return base_retriever
-
-
-def Vectorstore_backed_retriever(
-    vectorstore, search_type="similarity", k=4, score_threshold=None
-):
-    search_kwargs = {}
-    if k is not None:
-        search_kwargs["k"] = k
-    if score_threshold is not None:
-        search_kwargs["score_threshold"] = score_threshold
-    retriever = vectorstore.as_retriever(search_type=search_type, search_kwargs=search_kwargs)
-    return retriever
-
-
-def create_compression_retriever(
-    embeddings, base_retriever, chunk_size=500, k=16, similarity_threshold=None
-):
-    # 1) split
-    splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=0, separator=". ")
-    # 2) remove redundant
-    redundant_filter = EmbeddingsRedundantFilter(embeddings=embeddings)
-    # 3) keep most relevant
-    relevant_filter = EmbeddingsFilter(
-        embeddings=embeddings, k=k, similarity_threshold=similarity_threshold
-    )
-    # 4) reorder for long context
-    reordering = LongContextReorder()
-    # pipeline
-    pipeline_compressor = DocumentCompressorPipeline(
-        transformers=[splitter, redundant_filter, relevant_filter, reordering]
-    )
-    compression_retriever = ContextualCompressionRetriever(
-        base_compressor=pipeline_compressor, base_retriever=base_retriever
-    )
-    return compression_retriever
-
-
-def CohereRerank_retriever(
-    base_retriever, cohere_api_key, cohere_model="rerank-multilingual-v2.0", top_n=10
-):
-    compressor = CohereRerank(cohere_api_key=cohere_api_key, model=cohere_model, top_n=top_n)
-    retriever_Cohere = ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=base_retriever
-    )
-    return retriever_Cohere
-
-
-def chain_RAG_blocks():
-    """Construye todo el pipeline: ingestión → vectorstore → retriever → chain + memory."""
-    with st.spinner("Creating vectorstore..."):
-        error_messages = []
-        if (
-            not st.session_state.openai_api_key
-            and not st.session_state.google_api_key
-            and not st.session_state.hf_api_key
-        ):
-            error_messages.append(f"insert your {st.session_state.LLM_provider} API key")
-        if st.session_state.retriever_type == list_retriever_types[0] and not st.session_state.cohere_api_key:
-            error_messages.append("insert your Cohere API key")
-        if not st.session_state.uploaded_file_list:
-            error_messages.append("select documents to upload")
-        if st.session_state.vector_store_name == "":
-            error_messages.append("provide a Vectorstore name")
-
-        if error_messages:
-            if len(error_messages) == 1:
-                st.session_state.error_message = "Please " + error_messages[0] + "."
-            else:
-                st.session_state.error_message = (
-                    "Please " + ", ".join(error_messages[:-1]) + ", and " + error_messages[-1] + "."
-                )
-            return
-
-        st.session_state.error_message = ""
-
-        try:
-            # 1) limpiar tmp
-            delte_temp_files()
-            # 2) asegurar tmp
-            TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-            # 3) guardar archivos subidos en tmp
-            if st.session_state.uploaded_file_list is not None:
-                error_message = ""
-                for uploaded_file in st.session_state.uploaded_file_list:
-                    try:
-                        temp_file_path = os.path.join(TMP_DIR.as_posix(), uploaded_file.name)
-                        with open(temp_file_path, "wb") as temp_file:
-                            temp_file.write(uploaded_file.read())
-                    except Exception as e:
-                        error_message += str(e)
-                if error_message != "":
-                    st.warning(f"Errors: {error_message}")
-
-                # 4) cargar docs
-                documents = langchain_document_loader()
-                # 5) chunks
-                chunks = split_documents_to_chunks(documents)
-                # 6) embeddings
-                embeddings = select_embeddings_model()
-
-                # 7) crear carpeta de persistencia y vectorstore
-                persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
-                persist_path.mkdir(parents=True, exist_ok=True)
-
-                st.session_state.vector_store = Chroma.from_documents(
-                    documents=chunks,
-                    embedding=embeddings,
-                    persist_directory=persist_path.as_posix(),
-                )
-                st.info(f"Vectorstore **{st.session_state.vector_store_name}** is created successfully.")
-
-                # 8) retriever
-                st.session_state.retriever = create_retriever(
-                    vector_store=st.session_state.vector_store,
-                    embeddings=embeddings,
-                    retriever_type=st.session_state.retriever_type,
-                    base_retriever_search_type="similarity",
-                    base_retriever_k=16,
-                    compression_retriever_k=20,
-                    cohere_api_key=st.session_state.cohere_api_key,
-                    cohere_model="rerank-multilingual-v2.0",
-                    cohere_top_n=10,
-                )
-
-                # 9) chain + memory
-                (st.session_state.chain, st.session_state.memory) = create_ConversationalRetrievalChain(
-                    retriever=st.session_state.retriever,
-                    chain_type="stuff",
-                    language=st.session_state.assistant_language,
-                )
-
-                # 10) limpiar historial
-                clear_chat_history()
-
-        except Exception as error:
-            st.error(f"An error occurred: {error}")
-
+        documents.extend(doc_loader.load())
+    except:
+        pass
+    
+    # Cargar CSVs con procesamiento especializado
+    csv_documents = enhanced_csv_loader_documents()
+    documents.extend(csv_documents)
+    
+    return documents
 
 ####################################################################
-#                       Create memory
+#        Text Splitter Mejorado
 ####################################################################
-def create_memory(model_name="gpt-3.5-turbo", memory_max_token=None):
-    """SummaryMemory para gpt-3.5; BufferMemory para el resto."""
-    if model_name == "gpt-3.5-turbo":
-        if memory_max_token is None:
-            memory_max_token = 1024
-        memory = ConversationSummaryBufferMemory(
-            max_token_limit=memory_max_token,
-            llm=ChatOpenAI(
-                model_name="gpt-3.5-turbo",
-                openai_api_key=st.session_state.openai_api_key,
-                temperature=0.1,
-            ),
-            return_messages=True,
-            memory_key="chat_history",
-            output_key="answer",
-            input_key="question",
-        )
-    else:
-        memory = ConversationBufferMemory(
-            return_messages=True,
-            memory_key="chat_history",
-            output_key="answer",
-            input_key="question",
-        )
-    return memory
 
+def create_enhanced_text_splitter():
+    """Text splitter que mantiene integridad de registros de tarifas"""
+    return RecursiveCharacterTextSplitter(
+        chunk_size=2000,  # Chunks más grandes para mantener contexto completo
+        chunk_overlap=200,
+        separators=[
+            "\nREGISTRO DE TARIFA DE SHIPPING",  # Separador específico para tarifas
+            "\n\n",
+            "\n",
+            " ",
+            ""
+        ]
+    )
 
 ####################################################################
-#          Create ConversationalRetrievalChain with memory
+#        Template de Respuesta Mejorado
 ####################################################################
-def answer_template(language="spanish"):
-    return f"""
-Usa exclusivamente los datos del contexto (entre <context></context>). 
-Si la pregunta NO es de tarifas/costos, responde normalmente.
 
-Si la pregunta ES sobre costo/precio/tarifa de un trayecto (e.g., "¿cuánto cuesta de X a San Antonio?"), tienes que fijarte en las columnas del contexto y extraer los valores de las tarifas, normalmente tendrán siempre el mismo formato, POL, SERVICIO - VIA, POD, OF W/M, OTHERS(*) W/M , BL, SOLAS, TT APROX, y cada una de ellas tiene un valor diferente, debes preocuparte de eso y entregarlo a continuación.
-ENTREGA SIEMPRE el siguiente formato estandarizado (en la lengua solicitada):
+def enhanced_answer_template():
+    return """Eres un asistente especializado en tarifas de shipping marítimo. 
 
-1) Variable por W/M (por tonelada o m³): 
-   - OF W/M: 
-   - OTHERS(*) W/M:
-   - BL:
-   - SOLAS:
-   - TOTAL variable W/M = OF W/M + OTHERS(*) W/M =
+INSTRUCCIONES CRÍTICAS:
+1. Busca información EXACTA en el contexto proporcionado
+2. Los datos están estructurados como "ORIGEN: [puerto]" y "DESTINO: [puerto]" 
+3. Extrae valores EXACTOS de las secciones "TARIFAS EN USD POR W/M"
+4. NUNCA inventes valores
 
-2) Tiempo de tránsito (TT aprox.):
+FORMATO DE RESPUESTA OBLIGATORIO:
 
-Si en el contexto hay una fila exacta con esas columnas, extrae NÚMEROS y calcula.
-Si falta algún valor, dilo explícitamente (“no indicado”).
+🚢 **TARIFA PARA RUTA:** [Origen] ➜ [Destino]
+
+💰 **COSTOS POR W/M (por tonelada o m³):**
+   • **OF W/M:** [valor exacto del contexto]
+   • **OTHERS(*) W/M:** [valor exacto del contexto]  
+   • **BL:** [valor exacto del contexto]
+   • **SOLAS:** [valor exacto del contexto]
+
+📊 **TOTAL VARIABLE W/M:** USD [sumar OF W/M + OTHERS(*) W/M]
+
+⏱️ **TIEMPO DE TRÁNSITO:** [valor del contexto]
+
+🛤️ **SERVICIO/VÍA:** [valor del contexto]
+
+PROCESO DE BÚSQUEDA:
+1. Identifica los puertos de origen y destino en la pregunta
+2. Busca en el contexto la sección que contiene "ORIGEN: [puerto]" y "DESTINO: [puerto]" que coincidan
+3. De esa sección, extrae los valores de "TARIFAS EN USD POR W/M"
+4. Presenta la información en el formato especificado
+
+EJEMPLO DE BÚSQUEDA:
+Si el usuario pregunta "¿Cuánto cuesta de Canoas a San Antonio?":
+- Buscar en el contexto: "ORIGEN: CANOAS" Y "DESTINO: SAN ANTONIO"
+- Extraer los valores de la sección "TARIFAS EN USD POR W/M"
+
+Si NO encuentras coincidencias exactas, responde:
+"❌ No encontré información para la ruta [origen] → [destino] en la base de datos actual."
 
 <context>
-{{chat_history}}
+{chat_history}
 
-{{context}}
+{context}
 </context>
 
-Pregunta: {{question}}
+Pregunta: {question}
 
-Responde en: {language}.
-"""
+Respuesta:"""
 
+####################################################################
+#        Retriever Mejorado
+####################################################################
 
-def create_ConversationalRetrievalChain(
-    retriever,
-    chain_type="stuff",
-    language="spanish",
-):
+def create_smart_retriever(vector_store, search_type="mmr", k=6):
+    """Retriever optimizado para consultas de tarifas"""
+    search_kwargs = {
+        "k": k,
+        "lambda_mult": 0.5,  # Balance entre relevancia y diversidad
+        "fetch_k": k * 2  # Obtener más candidatos iniciales
+    }
+    
+    retriever = vector_store.as_retriever(
+        search_type=search_type,
+        search_kwargs=search_kwargs
+    )
+    return retriever
+
+####################################################################
+#        Chain Mejorada
+####################################################################
+
+def create_enhanced_ConversationalRetrievalChain(retriever, chain_type="stuff"):
+    """Chain optimizada para máxima precisión en tarifas"""
+    
     condense_question_prompt = PromptTemplate(
         input_variables=["chat_history", "question"],
-        template="""Given the following conversation and a follow up question, 
-rephrase the follow up question to be a standalone question, in its original language.\n\n
-Chat History:\n{chat_history}\n
-Follow Up Input: {question}\n
-Standalone question:""",
+        template="""Basándote en la conversación previa, reformula la pregunta para que sea clara e independiente.
+
+IMPORTANTE: Si la pregunta es sobre tarifas/costos de shipping, mantén EXACTAMENTE los nombres de puertos mencionados.
+
+Historial:
+{chat_history}
+
+Pregunta actual: {question}
+
+Pregunta reformulada y clara:""",
     )
 
-    answer_prompt = ChatPromptTemplate.from_template(answer_template(language=language))
-    memory = create_memory(st.session_state.selected_model)
+    answer_prompt = ChatPromptTemplate.from_template(enhanced_answer_template())
+    memory = create_memory()
 
-    if st.session_state.LLM_provider == "OpenAI":
-        standalone_query_generation_llm = ChatOpenAI(
-            api_key=st.session_state.openai_api_key,
-            model=st.session_state.selected_model,
-            temperature=0.1,
-        )
-        response_generation_llm = ChatOpenAI(
-            api_key=st.session_state.openai_api_key,
-            model=st.session_state.selected_model,
-            temperature=st.session_state.temperature,
-            model_kwargs={"top_p": st.session_state.top_p},
-        )
-    if st.session_state.LLM_provider == "Google":
-        standalone_query_generation_llm = ChatGoogleGenerativeAI(
-            google_api_key=st.session_state.google_api_key,
-            model=st.session_state.selected_model,
-            temperature=0.1,
-            convert_system_message_to_human=True,
-        )
-        response_generation_llm = ChatGoogleGenerativeAI(
-            google_api_key=st.session_state.google_api_key,
-            model=st.session_state.selected_model,
-            temperature=st.session_state.temperature,
-            top_p=st.session_state.top_p,
-            convert_system_message_to_human=True,
-        )
-    if st.session_state.LLM_provider == "HuggingFace":
-        standalone_query_generation_llm = HuggingFaceHub(
-            repo_id=st.session_state.selected_model,
-            huggingfacehub_api_token=st.session_state.hf_api_key,
-            model_kwargs={"temperature": 0.1, "top_p": 0.95, "do_sample": True, "max_new_tokens": 1024},
-        )
-        response_generation_llm = HuggingFaceHub(
-            repo_id=st.session_state.selected_model,
-            huggingfacehub_api_token=st.session_state.hf_api_key,
-            model_kwargs={
-                "temperature": st.session_state.temperature,
-                "top_p": st.session_state.top_p,
-                "do_sample": True,
-                "max_new_tokens": 1024,
-            },
-        )
+    # Configuración de LLMs con parámetros optimizados
+    standalone_query_llm = ChatOpenAI(
+        api_key=OPENAI_API_KEY,
+        model=st.session_state.selected_model,
+        temperature=0.0,  # Precisión máxima para reformular
+    )
+    
+    response_llm = ChatOpenAI(
+        api_key=OPENAI_API_KEY,
+        model=st.session_state.selected_model,
+        temperature=min(0.2, st.session_state.temperature),  # Limitamos temperatura
+        model_kwargs={
+            "top_p": st.session_state.top_p,
+        }
+    )
 
     chain = ConversationalRetrievalChain.from_llm(
         condense_question_prompt=condense_question_prompt,
         combine_docs_chain_kwargs={"prompt": answer_prompt},
-        condense_question_llm=standalone_query_generation_llm,
-        llm=response_generation_llm,
+        condense_question_llm=standalone_query_llm,
+        llm=response_llm,
         memory=memory,
         retriever=retriever,
         chain_type=chain_type,
-        verbose=False,
+        verbose=False,  # Cambiar a False para evitar logs excesivos
         return_source_documents=True,
     )
 
     return chain, memory
 
+####################################################################
+#        Validación de Respuestas
+####################################################################
+
+def validate_shipping_response(response_text: str, question: str) -> Dict[str, Any]:
+    """Valida respuestas de tarifas para detectar inconsistencias"""
+    
+    validation_result = {
+        'is_valid': True,
+        'warnings': [],
+        'info': []
+    }
+    
+    # Detectar si es consulta de tarifa
+    tariff_keywords = ['costo', 'precio', 'tarifa', 'cuánto', 'vale', 'cobran']
+    is_tariff_query = any(keyword in question.lower() for keyword in tariff_keywords)
+    
+    if is_tariff_query:
+        # Verificar formato correcto
+        required_sections = ['OF W/M:', 'OTHERS(*) W/M:', 'BL:', 'SOLAS:']
+        missing_sections = [section for section in required_sections if section not in response_text]
+        
+        if missing_sections:
+            validation_result['warnings'].append(
+                f"Faltan secciones: {', '.join(missing_sections)}"
+            )
+        
+        # Verificar presencia de valores numéricos o "no especificado"
+        if not any(pattern in response_text for pattern in ['USD', '$', 'no especificado', 'no encontré']):
+            validation_result['warnings'].append("Respuesta sin información tarifaria clara")
+        
+        # Verificar cálculo de total
+        if 'TOTAL VARIABLE W/M:' not in response_text and '❌ No encontré' not in response_text:
+            validation_result['warnings'].append("Falta cálculo de total variable")
+    
+    return validation_result
+
+####################################################################
+#        Función de Respuesta Mejorada
+####################################################################
+
+def get_enhanced_response_from_LLM(prompt):
+    """Función mejorada con validación y mejor presentación"""
+    try:
+        with st.spinner("🔍 Buscando información en la base de datos..."):
+            response = st.session_state.chain.invoke({"question": prompt})
+            answer = response["answer"]
+            
+            # Validar respuesta
+            validation = validate_shipping_response(answer, prompt)
+            
+            # Agregar al historial
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            
+            # Mostrar conversación
+            st.chat_message("user").write(prompt)
+            
+            with st.chat_message("assistant"):
+                st.markdown(answer)
+                
+                # Mostrar warnings si los hay
+                if validation['warnings']:
+                    st.warning("⚠️ **Advertencias detectadas:**")
+                    for warning in validation['warnings']:
+                        st.write(f"• {warning}")
+                    st.write("*Considera revisar la información o reformular la consulta*")
+                
+                # Mostrar documentos fuente
+                with st.expander("📋 **Ver documentos fuente utilizados**"):
+                    if response["source_documents"]:
+                        for i, doc in enumerate(response["source_documents"], 1):
+                            source = doc.metadata.get("source", "Fuente desconocida")
+                            row_num = doc.metadata.get("row_number", "")
+                            
+                            st.write(f"**📄 Documento {i}:** {Path(source).name}")
+                            if row_num:
+                                st.write(f"**📍 Registro:** #{row_num}")
+                            
+                            # Mostrar contenido relevante
+                            content_preview = doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
+                            st.code(content_preview, language="text")
+                            st.divider()
+                    else:
+                        st.write("❌ No se encontraron documentos fuente relevantes")
+                
+    except Exception as e:
+        st.error(f"❌ **Error al procesar la consulta:** {str(e)}")
+        st.info("💡 **Sugerencias para mejorar tu consulta:**")
+        st.write("• Especifica claramente los puertos de origen y destino")
+        st.write("• Usa nombres completos de puertos (ej: 'Miami' en lugar de 'MIA')")
+        st.write("• Asegúrate de que el vectorstore esté cargado correctamente")
+
+####################################################################
+#        Interfaz Mejorada
+####################################################################
+
+st.set_page_config(
+    page_title="RAG Shipping Tarifas",
+    page_icon="🚢",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("🚢 RAG Chatbot Especializado en Tarifas de Shipping")
+st.markdown("*Sistema inteligente para consulta de costos y rutas marítimas*")
+
+def enhanced_expander_model_parameters():
+    """Configuración de modelo mejorada"""
+    with st.expander("⚙️ **Configuración del Modelo**"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.session_state.selected_model = st.selectbox(
+                "🤖 Modelo OpenAI",
+                OPENAI_MODELS,
+                help="GPT-4o recomendado para máxima precisión en tarifas"
+            )
+            
+        with col2:
+            st.session_state.temperature = st.slider(
+                "🌡️ Temperatura",
+                min_value=0.0,
+                max_value=0.5,
+                value=0.1,
+                step=0.1,
+                help="Valores bajos = respuestas más precisas y consistentes"
+            )
+        
+        st.session_state.top_p = st.slider(
+            "🎯 Top P",
+            min_value=0.8,
+            max_value=1.0,
+            value=0.9,
+            step=0.05,
+            help="Control de diversidad en las respuestas"
+        )
+
+def enhanced_sidebar_and_documentChooser():
+    """Interfaz lateral mejorada"""
+    with st.sidebar:
+        st.markdown("### 🚀 **Sistema RAG para Shipping**")
+        st.caption("Powered by LangChain & OpenAI")
+        
+        st.markdown("---")
+        
+        # Status de OpenAI
+        st.subheader("🔐 Estado de Conexión")
+        if OPENAI_API_KEY:
+            st.success("✅ OpenAI API conectada")
+            enhanced_expander_model_parameters()
+        else:
+            st.error("❌ API Key no encontrada")
+            st.info("📝 Agrega `OPENAI_API_KEY` a tu archivo `.env`")
+            return
+
+    # Tabs para manejo de vectorstore
+    tab1, tab2 = st.tabs(["🆕 Crear Vectorstore", "📂 Cargar Vectorstore"])
+
+    # Tab 1: Crear nuevo vectorstore
+    with tab1:
+        st.markdown("### 📤 Subir Documentos")
+        
+        st.session_state.uploaded_file_list = st.file_uploader(
+            "Selecciona archivos para procesar:",
+            accept_multiple_files=True,
+            type=["pdf", "txt", "docx", "csv"],
+            help="Los archivos CSV de tarifas recibirán procesamiento especializado"
+        )
+        
+        st.session_state.vector_store_name = st.text_input(
+            "📊 Nombre del Vectorstore:",
+            placeholder="ej: tarifas_2024_q1",
+            help="Se creará una base de datos con este nombre"
+        )
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            create_btn = st.button("🚀 Crear Vectorstore", type="primary")
+        with col2:
+            if st.button("🗑️ Limpiar"):
+                st.session_state.uploaded_file_list = None
+                st.session_state.vector_store_name = ""
+        
+        if create_btn:
+            enhanced_chain_RAG_blocks()
+        
+        # Mostrar errores si los hay
+        if hasattr(st.session_state, 'error_message') and st.session_state.error_message:
+            st.error(st.session_state.error_message)
+
+    # Tab 2: Cargar vectorstore existente
+    with tab2:
+        st.markdown("### 📖 Cargar Base de Datos Existente")
+        
+        # Listar vectorstores disponibles
+        LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
+        available_stores = [
+            f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() 
+            if f.is_dir() and not f.name.startswith('.')
+        ]
+        
+        if available_stores:
+            st.session_state.selected_vectorstore_name = st.selectbox(
+                "🗂️ Vectorstores disponibles:",
+                options=[""] + available_stores,
+                help=f"Encontrados {len(available_stores)} vectorstore(s)"
+            )
+        else:
+            st.info("📭 No hay vectorstores disponibles. Crea uno primero.")
+        
+        # Opción de ruta personalizada
+        custom_path = st.text_input(
+            "📂 O especifica una ruta completa:",
+            placeholder="/ruta/completa/a/tu/vectorstore",
+            help="Opcional: ruta absoluta a un vectorstore externo"
+        )
+        
+        if st.button("📖 Cargar Vectorstore", type="primary"):
+            load_existing_vectorstore(custom_path)
+
+####################################################################
+#        Funciones de Procesamiento Mejoradas
+####################################################################
+
+def delete_temp_files():
+    """Limpieza mejorada de archivos temporales"""
+    try:
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        files = glob.glob(TMP_DIR.as_posix() + "/*")
+        deleted_count = 0
+        
+        for f in files:
+            try:
+                os.remove(f)
+                deleted_count += 1
+            except:
+                pass
+        
+        if deleted_count > 0:
+            st.info(f"🗑️ Limpiados {deleted_count} archivos temporales")
+            
+    except Exception as e:
+        st.warning(f"Error limpiando archivos temporales: {e}")
+
+def enhanced_chain_RAG_blocks():
+    """Pipeline mejorado de creación de vectorstore"""
+    
+    if not OPENAI_API_KEY:
+        st.session_state.error_message = "❌ Configura tu OpenAI API key en el archivo .env"
+        return
+
+    # Validaciones
+    errors = []
+    if not st.session_state.uploaded_file_list:
+        errors.append("seleccionar archivos para subir")
+    if not st.session_state.vector_store_name.strip():
+        errors.append("proporcionar un nombre para el vectorstore")
+    
+    if errors:
+        error_msg = "Por favor " + " y ".join(errors) + "."
+        st.session_state.error_message = error_msg
+        return
+    
+    st.session_state.error_message = ""
+    
+    with st.spinner("🔄 Procesando documentos y creando vectorstore..."):
+        try:
+            # 1. Limpiar directorio temporal
+            delete_temp_files()
+            
+            # 2. Guardar archivos subidos
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("📤 Guardando archivos...")
+            for i, uploaded_file in enumerate(st.session_state.uploaded_file_list):
+                temp_file_path = TMP_DIR / uploaded_file.name
+                with open(temp_file_path, "wb") as temp_file:
+                    temp_file.write(uploaded_file.read())
+                progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.3)
+            
+            # 3. Cargar y procesar documentos
+            status_text.text("📖 Cargando documentos...")
+            documents = enhanced_langchain_document_loader()
+            progress_bar.progress(0.5)
+            
+            if not documents:
+                st.error("❌ No se pudieron cargar documentos. Verifica los archivos.")
+                return
+            
+            st.info(f"📊 Cargados {len(documents)} documentos")
+            
+            # 4. Dividir en chunks
+            status_text.text("✂️ Dividiendo documentos en chunks...")
+            text_splitter = create_enhanced_text_splitter()
+            chunks = text_splitter.split_documents(documents)
+            progress_bar.progress(0.7)
+            
+            st.info(f"📝 Creados {len(chunks)} chunks de texto")
+            
+            # 5. Crear embeddings y vectorstore
+            status_text.text("🧠 Creando embeddings...")
+            embeddings = OpenAIEmbeddings(
+                api_key=OPENAI_API_KEY,
+                model="text-embedding-ada-002"  # Modelo estable y compatible
+            )
+            
+            persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
+            persist_path.mkdir(parents=True, exist_ok=True)
+            
+            st.session_state.vector_store = Chroma.from_documents(
+                documents=chunks,
+                embedding=embeddings,
+                persist_directory=persist_path.as_posix(),
+                collection_name="shipping_tariffs"
+            )
+            progress_bar.progress(0.9)
+            
+            # 6. Crear retriever y chain
+            status_text.text("🔗 Configurando sistema de consultas...")
+            st.session_state.retriever = create_smart_retriever(
+                vector_store=st.session_state.vector_store
+            )
+            
+            st.session_state.chain, st.session_state.memory = create_enhanced_ConversationalRetrievalChain(
+                retriever=st.session_state.retriever
+            )
+            
+            # 7. Limpiar historial
+            clear_chat_history()
+            
+            progress_bar.progress(1.0)
+            status_text.empty()
+            progress_bar.empty()
+            
+            st.success(f"✅ **Vectorstore '{st.session_state.vector_store_name}' creado exitosamente!**")
+            st.balloons()
+            
+            # Mostrar estadísticas
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📄 Documentos", len(documents))
+            with col2:
+                st.metric("📝 Chunks", len(chunks))
+            with col3:
+                csv_docs = sum(1 for doc in documents if doc.metadata.get("content_type") == "shipping_tariff")
+                st.metric("🚢 Registros de Tarifas", csv_docs)
+                
+        except Exception as e:
+            st.error(f"❌ Error creando vectorstore: {str(e)}")
+            st.info("💡 Verifica que los archivos sean válidos y que tengas suficiente espacio en disco")
+
+def load_existing_vectorstore(custom_path=""):
+    """Carga vectorstore existente con mejor manejo de errores"""
+    if not OPENAI_API_KEY:
+        st.error("❌ OpenAI API key requerida")
+        return
+
+    # Determinar ruta del vectorstore
+    vectorstore_path = None
+    if custom_path.strip():
+        vectorstore_path = Path(custom_path.strip())
+    elif hasattr(st.session_state, 'selected_vectorstore_name') and st.session_state.selected_vectorstore_name:
+        vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
+    
+    if not vectorstore_path or not vectorstore_path.exists():
+        st.error("❌ Ruta de vectorstore no válida o inexistente")
+        return
+
+    with st.spinner("📖 Cargando vectorstore..."):
+        try:
+            embeddings = OpenAIEmbeddings(
+                api_key=OPENAI_API_KEY,
+                model="text-embedding-ada-002"  # Modelo estable
+            )
+            
+            st.session_state.vector_store = Chroma(
+                embedding_function=embeddings,
+                persist_directory=vectorstore_path.as_posix(),
+                collection_name="shipping_tariffs"
+            )
+            
+            # Verificar que el vectorstore tiene datos
+            collection_count = st.session_state.vector_store._collection.count()
+            if collection_count == 0:
+                st.warning("⚠️ El vectorstore está vacío")
+                return
+            
+            st.session_state.retriever = create_smart_retriever(
+                vector_store=st.session_state.vector_store
+            )
+            
+            st.session_state.chain, st.session_state.memory = create_enhanced_ConversationalRetrievalChain(
+                retriever=st.session_state.retriever
+            )
+            
+            clear_chat_history()
+            
+            st.success(f"✅ **Vectorstore cargado exitosamente!**")
+            st.info(f"📊 Contiene {collection_count} documentos indexados")
+            
+        except Exception as e:
+            st.error(f"❌ Error cargando vectorstore: {str(e)}")
+
+####################################################################
+#        Memoria y Utilidades
+####################################################################
+
+def create_memory():
+    """Crear memoria de conversación optimizada"""
+    return ConversationBufferMemory(
+        return_messages=True,
+        memory_key="chat_history",
+        output_key="answer",
+        input_key="question"
+    )
 
 def clear_chat_history():
-    """clear chat history and memory."""
+    """Limpiar historial de chat y memoria"""
     st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": dict_welcome_message[st.session_state.assistant_language],
-        }
+        {"role": "assistant", "content": WELCOME_MESSAGE}
     ]
-    try:
-        st.session_state.memory.clear()
-    except:
-        pass
-
-
-def get_response_from_LLM(prompt):
-    """invoke the LLM, get response, and display results (answer and source documents)."""
-    try:
-        response = st.session_state.chain.invoke({"question": prompt})
-        answer = response["answer"]
-
-        if st.session_state.LLM_provider == "HuggingFace":
-            start = answer.find("\nAnswer: ")
-            if start != -1:
-                answer = answer[start + len("\nAnswer: ") :]
-
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.chat_message("user").write(prompt)
-        with st.chat_message("assistant"):
-            st.markdown(answer)
-            with st.expander("**Source documents**"):
-                documents_content = ""
-                for document in response["source_documents"]:
-                    try:
-                        page = " (Page: " + str(document.metadata.get("page")) + ")"
-                    except:
-                        page = ""
-                    documents_content += (
-                        "**Source: " + str(document.metadata.get("source")) + page + "**\n\n"
-                    )
-                    documents_content += document.page_content + "\n\n\n"
-                st.markdown(documents_content)
-    except Exception as e:
-        st.warning(e)
-
+    if hasattr(st.session_state, 'memory') and st.session_state.memory:
+        try:
+            st.session_state.memory.clear()
+        except:
+            pass
 
 ####################################################################
-#                         Chatbot
+#        Función Principal del Chatbot
 ####################################################################
-def chatbot():
-    sidebar_and_documentChooser()
-    st.divider()
-    col1, col2 = st.columns([7, 3])
+
+def enhanced_chatbot():
+    """Función principal del chatbot mejorada"""
+    enhanced_sidebar_and_documentChooser()
+    
+    st.markdown("---")
+    
+    # Header del chat
+    col1, col2, col3 = st.columns([6, 2, 2])
     with col1:
-        st.subheader("Chat with your data")
+        st.subheader("💬 Chat con tus Datos de Shipping")
     with col2:
-        st.button("Clear Chat History", on_click=clear_chat_history)
+        if st.button("🗑️ Limpiar Chat", help="Borra el historial de conversación"):
+            clear_chat_history()
+            st.rerun()
+    with col3:
+        # Mostrar estado del sistema
+        if hasattr(st.session_state, 'chain'):
+            st.success("🟢 Sistema Listo")
+        else:
+            st.warning("🟡 Cargar Vectorstore")
 
+    # Inicializar mensajes si no existen
     if "messages" not in st.session_state:
-        st.session_state["messages"] = [
-            {
-                "role": "assistant",
-                "content": dict_welcome_message[st.session_state.assistant_language],
-            }
-        ]
+        clear_chat_history()
+
+    # Mostrar historial de mensajes
     for msg in st.session_state.messages:
-        st.chat_message(msg["role"]).write(msg["content"])
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
 
-    if prompt := st.chat_input():
-        if (
-            not st.session_state.openai_api_key
-            and not st.session_state.google_api_key
-            and not st.session_state.hf_api_key
-        ):
-            st.info(f"Please insert your {st.session_state.LLM_provider} API key to continue.")
+    # Input del usuario
+    if prompt := st.chat_input("Pregunta sobre tarifas de shipping... (ej: ¿Cuánto cuesta enviar de Miami a San Antonio?)"):
+        
+        # Verificar que el sistema esté listo
+        if not OPENAI_API_KEY:
+            st.error("🔑 Configura tu OpenAI API key para continuar")
             st.stop()
-        with st.spinner("Running..."):
-            get_response_from_LLM(prompt=prompt)
+        
+        if not hasattr(st.session_state, 'chain'):
+            st.warning("⚠️ Primero carga o crea un vectorstore")
+            st.stop()
+        
+        # Procesar consulta
+        get_enhanced_response_from_LLM(prompt)
 
+####################################################################
+#        Sección de Ayuda y Tips
+####################################################################
+
+def show_help_section():
+    """Muestra sección de ayuda y ejemplos"""
+    with st.expander("❓ **Ayuda y Ejemplos de Uso**"):
+        st.markdown("""
+        ### 🎯 **Cómo hacer consultas efectivas:**
+        
+        **✅ Consultas recomendadas:**
+        - "¿Cuánto cuesta enviar de Miami a San Antonio?"
+        - "Tarifa de Callao a Valparaíso"
+        - "Tiempo de tránsito de Miami a Guayaquil"
+        - "Precio por tonelada de Santos a Cartagena"
+        
+        **❌ Evita consultas vagas:**
+        - "Cuánto cuesta enviar"
+        - "Precios de shipping"
+        - "Tarifas generales"
+        
+        ### 📊 **Información que puedes obtener:**
+        - **OF W/M**: Flete oceánico por peso/medida
+        - **OTHERS(*) W/M**: Otros costos variables
+        - **BL**: Bill of Lading
+        - **SOLAS**: Certificación de seguridad
+        - **Tiempo de tránsito**: Duración estimada del viaje
+        
+        ### 🚢 **Puertos soportados (ejemplos):**
+        - Miami, San Antonio, Callao, Guayaquil
+        - Santos, Cartagena, Puerto Cabello, Buenaventura
+        """)
+
+####################################################################
+#        Función Principal
+####################################################################
 
 if __name__ == "__main__":
-    chatbot()
+    # Configurar página
+    if 'initialized' not in st.session_state:
+        st.session_state.initialized = True
+        # Configurar valores por defecto
+        st.session_state.selected_model = "gpt-4o"
+        st.session_state.temperature = 0.1
+        st.session_state.top_p = 0.9
+        st.session_state.error_message = ""
+    
+    # Mostrar sección de ayuda
+    show_help_section()
+    
+    # Ejecutar chatbot principal
+    enhanced_chatbot()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; font-size: 0.8em;'>
+        🚢 RAG Chatbot para Tarifas de Shipping | Powered by LangChain & OpenAI
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
