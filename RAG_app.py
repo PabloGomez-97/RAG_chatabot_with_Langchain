@@ -639,9 +639,7 @@ ENTREGA SIEMPRE el siguiente formato estandarizado (en la lengua solicitada):
    - OTHERS(*) W/M:
    - BL:
    - SOLAS:
-   
    - TOTAL variable W/M = OF W/M + OTHERS(*) W/M =
-
 
 2) Tiempo de tránsito (TT aprox.):
 
