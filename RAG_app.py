@@ -341,11 +341,6 @@ Vigencia: 15-31 Agosto 2025
 • Bill of Lading: [valor] USD por embarque
 • SOLAS: [valor] USD por embarque
 
-📊 CÁLCULO TIPO (ejemplo 5 W/M):
-• Costos Variables: 5 × ([OF] + [Others]) = [total variable] USD
-• Costos Fijos: [BL] + [SOLAS] = [total fijo] USD  
-• TOTAL ESTIMADO: [suma total] USD
-
 ⏱️ OPERATIVO:
 • Frecuencia: [frecuencia]
 • Agente: [agente]
