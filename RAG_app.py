@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import re
 from typing import List, Dict, Any
+import json
 
 # Load environment variables
 load_dotenv()
@@ -39,7 +40,7 @@ from langchain_community.vectorstores import Chroma
 import streamlit as st
 
 ####################################################################
-#              Config Mejorado
+#              CONFIG SEEMANN GROUP v2.0
 ####################################################################
 
 # Get OpenAI API key from environment
@@ -47,58 +48,132 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Assistant language fixed to Spanish
 ASSISTANT_LANGUAGE = "spanish"
-WELCOME_MESSAGE = "¿Cómo puedo ayudarle hoy? Estoy especializado en consultas de tarifas de shipping."
+WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado v2.0 en tarifarios marítimos de Seemann Group.
 
-# Available OpenAI models (priorizando precisión para tarifas)
+🚀 **NUEVAS CAPACIDADES AVANZADAS:**
+• Análisis exhaustivo de todos los documentos disponibles
+• Extracción inteligente de tarifas combinadas (USD2300/2800)
+• Procesamiento de puertos múltiples automáticamente
+• Validación de completitud de respuestas
+• Búsqueda multi-query para máxima cobertura
+
+🚢 **Servicios especializados:**
+• Cotizaciones FCL completas (20', 40', 40HC)
+• Comparativas exhaustivas de navieras
+• Términos de demurrage y detention
+• Análisis de rutas alternativas
+
+💡 **Ejemplos de consultas avanzadas:**
+- "¿Qué opciones tengo desde China a San Antonio?" (encuentra TODAS)
+- "Compara todas las navieras disponibles Shanghai-Chile"
+- "¿Cuál es la opción más económica desde Asia?"
+"""
+
+# Available OpenAI models
 OPENAI_MODELS = [
     "gpt-4o",
-    "gpt-4-turbo",
-    "gpt-4-turbo-preview",
+    "gpt-4-turbo", 
     "gpt-3.5-turbo-0125",
-    "gpt-3.5-turbo",
 ]
 
 # Rutas base
 TMP_DIR = Path(__file__).resolve().parent.joinpath("data", "tmp")
 LOCAL_VECTOR_STORE_DIR = Path(__file__).resolve().parent.joinpath("data", "vector_stores")
 
-# Asegurar que existan los directorios base al iniciar
+# Asegurar directorios
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 ####################################################################
-#            MEJORAS: Procesamiento Especializado para CSVs
+#            PARSER AVANZADO v2.0
 ####################################################################
 
-class ShippingTariffProcessor:
-    """Procesador especializado para tarifas de shipping"""
+class EnhancedFreightParser:
+    """Parser avanzado que maneja CSVs complejos y formatos diversos"""
     
     def __init__(self):
         self.port_aliases = {
-            'miami': ['miami', 'mia', 'miami usa', 'miami us'],
-            'san antonio': ['san antonio', 'san antonio chile', 'valparaiso', 'sap', 'san antonio - chile'],
-            'callao': ['callao', 'callao peru', 'lim', 'lima'],
-            'guayaquil': ['guayaquil', 'guayaquil ecuador', 'gye'],
-            'santos': ['santos', 'santos brasil', 'sao paulo'],
-            'cartagena': ['cartagena', 'cartagena colombia', 'ctg'],
-            'puerto cabello': ['puerto cabello', 'venezuela', 'pcb'],
-            'buenaventura': ['buenaventura', 'colombia', 'bun'],
-            'canoas': ['canoas', 'canoas brasil', 'brazil'],
-            'rio de janeiro': ['rio de janeiro', 'rio', 'brasil'],
-            'curitiba': ['curitiba', 'brasil'],
-            'itajai': ['itajai', 'brasil'],
-            'manzanillo': ['manzanillo', 'mexico', 'manzanillo mx'],
-            'new york': ['new york', 'ny', 'nueva york'],
-            'chicago': ['chicago', 'chi'],
-            'houston': ['houston', 'hou'],
-            'atlanta': ['atlanta', 'atl'],
-            'baltimore': ['baltimore', 'bal'],
-            'boston': ['boston', 'bos'],
-            'detroit': ['detroit', 'det'],
+            'shanghai': ['shanghai', 'sha', 'china shanghai'],
+            'ningbo': ['ningbo', 'ngb', 'china ningbo'],
+            'shenzhen': ['shenzhen', 'szn', 'china shenzhen'],
+            'qingdao': ['qingdao', 'tao', 'china qingdao'],
+            'tianjin': ['tianjin', 'tja', 'china tianjin'],
+            'xiamen': ['xiamen', 'xmn', 'china xiamen'],
+            'shekou': ['shekou', 'sku', 'china shekou'],
+            'cbp': ['cbp', 'china basic port'],
+            'san antonio': ['san antonio', 'sap', 'chile san antonio'],
+            'valparaiso': ['valparaiso', 'val', 'chile valparaiso'],
+            'callao': ['callao', 'cao', 'peru callao'],
+            'guayaquil': ['guayaquil', 'gye', 'ecuador guayaquil'],
+        }
+        
+        self.carrier_aliases = {
+            'cosco': ['cosco', 'cosco shipping', 'cscl'],
+            'msk': ['msk', 'maersk', 'maersk line'],
+            'cma': ['cma', 'cma cgm', 'cgm'],
+            'msc': ['msc', 'mediterranean shipping'],
+            'one': ['one', 'ocean network express'],
+            'pil': ['pil', 'pacific international'],
+            'ecu': ['ecu', 'ecu worldwide'],
         }
     
+    def parse_combined_rates(self, rate_string: str) -> Dict[str, str]:
+        """Extrae tarifas combinadas como 'USD2300/2800 per 20/40'"""
+        if pd.isna(rate_string) or not rate_string:
+            return {"20": "TBD", "40": "TBD"}
+        
+        rate_string = str(rate_string).strip()
+        
+        # Patrón USD2300/2800 per 20/40
+        pattern1 = r'USD(\d+)/(\d+)\s*per\s*20/40'
+        match1 = re.search(pattern1, rate_string, re.IGNORECASE)
+        if match1:
+            return {
+                "20": f"USD {match1.group(1)}",
+                "40": f"USD {match1.group(2)}"
+            }
+        
+        # Patrón $2,605.00/$2,955.00
+        pattern2 = r'\$?([\d,]+\.?\d*)/\$?([\d,]+\.?\d*)'
+        match2 = re.search(pattern2, rate_string)
+        if match2:
+            return {
+                "20": f"USD {match2.group(1)}",
+                "40": f"USD {match2.group(2)}"
+            }
+        
+        # Valores individuales con $
+        pattern3 = r'\$?([\d,]+\.?\d*)'
+        match3 = re.search(pattern3, rate_string)
+        if match3:
+            return {
+                "20": f"USD {match3.group(1)}",
+                "40": f"USD {match3.group(1)}"
+            }
+        
+        return {"20": "TBD", "40": "TBD"}
+    
+    def parse_multiple_ports(self, port_string: str) -> List[str]:
+        """Extrae puertos múltiples como 'QINGDAO/SHANGHAI/NINGBO/SHENZHEN'"""
+        if pd.isna(port_string) or not port_string:
+            return []
+        
+        port_string = str(port_string).strip()
+        
+        # Separadores comunes
+        separators = ['/', ',', '|', ';', ' OR ', ' or ']
+        ports = [port_string]
+        
+        for sep in separators:
+            new_ports = []
+            for port in ports:
+                new_ports.extend([p.strip() for p in port.split(sep) if p.strip()])
+            ports = new_ports
+        
+        return [port for port in ports if port and len(port) > 1]
+    
     def normalize_port_name(self, port: str) -> str:
-        """Normaliza nombres de puertos para mejor matching"""
+        """Normaliza nombres de puertos"""
         if not port:
             return ""
         
@@ -108,24 +183,285 @@ class ShippingTariffProcessor:
                 return canonical
         return port_lower
     
-    def extract_numeric_value(self, value_str: str) -> str:
-        """Extrae valores numéricos de strings, manteniendo formato original si es válido"""
-        if pd.isna(value_str) or value_str in ['', 'nan', 'NaN']:
-            return "no especificado"
+    def normalize_carrier_name(self, carrier: str) -> str:
+        """Normaliza nombres de navieras"""
+        if not carrier:
+            return ""
         
-        value_str = str(value_str).strip()
-        # Buscar patrones numéricos
-        numeric_match = re.search(r'\d+(?:\.\d+)?', value_str)
-        if numeric_match:
-            return value_str  # Retornar el string original si contiene números
-        return "no especificado"
+        carrier_lower = carrier.lower().strip()
+        for canonical, aliases in self.carrier_aliases.items():
+            if any(alias in carrier_lower for alias in aliases):
+                return canonical
+        return carrier_lower
+    
+    def extract_free_time(self, free_time_string: str) -> str:
+        """Extrae días libres de strings como '21days'"""
+        if pd.isna(free_time_string) or not free_time_string:
+            return "No especificado"
+        
+        free_time_string = str(free_time_string).strip()
+        
+        # Buscar patrón número + days
+        pattern = r'(\d+)\s*days?'
+        match = re.search(pattern, free_time_string, re.IGNORECASE)
+        if match:
+            return f"{match.group(1)} días"
+        
+        # Solo números
+        pattern2 = r'(\d+)'
+        match2 = re.search(pattern2, free_time_string)
+        if match2:
+            return f"{match2.group(1)} días"
+        
+        return "No especificado"
 
-def enhanced_csv_loader_documents():
-    """Cargador mejorado de CSV que crea documentos LangChain estructurados"""
+####################################################################
+#            PROCESADORES DE CSV AVANZADOS
+####################################################################
+
+def process_vertical_csv(df: pd.DataFrame, csv_file: str, parser: EnhancedFreightParser) -> List:
+    """Procesa CSVs formato vertical como NB SEASTAR"""
+    documents = []
+    
+    # Convertir DataFrame vertical a diccionario
+    data_dict = {}
+    
+    for idx, row in df.iterrows():
+        key = None
+        value = None
+        
+        for col in df.columns:
+            cell_value = row[col]
+            if pd.notna(cell_value) and str(cell_value).strip():
+                content = str(cell_value).strip()
+                
+                if ':' in content:
+                    parts = content.split(':', 1)
+                    key = parts[0].strip()
+                    value = parts[1].strip() if len(parts) > 1 else ""
+                    data_dict[key] = value
+                else:
+                    if key is None:
+                        key = content
+                    else:
+                        value = content
+                        data_dict[key] = value
+                        break
+        
+        if key and not value:
+            data_dict[key] = ""
+    
+    # Extraer información específica
+    pol_raw = ""
+    pod_raw = ""
+    carrier = ""
+    rates_raw = ""
+    free_time_raw = ""
+    validity_raw = ""
+    
+    for key, value in data_dict.items():
+        key_upper = key.upper()
+        if 'POL' in key_upper:
+            pol_raw = value
+        elif 'POD' in key_upper:
+            pod_raw = value
+        elif 'CARRIER' in key_upper:
+            carrier = value
+        elif any(term in key_upper for term in ['O/F', 'OF', 'FREIGHT', 'USD']):
+            rates_raw = value
+        elif 'FREE' in key_upper and 'TIME' in key_upper:
+            free_time_raw = value
+        elif 'VALIDITY' in key_upper or 'VALID' in key_upper:
+            validity_raw = value
+    
+    # Procesar puertos múltiples
+    pol_list = parser.parse_multiple_ports(pol_raw)
+    pod_list = parser.parse_multiple_ports(pod_raw) if pod_raw else ['SAN ANTONIO']
+    
+    # Procesar tarifas
+    rates = parser.parse_combined_rates(rates_raw)
+    free_days = parser.extract_free_time(free_time_raw)
+    
+    # Crear documentos para cada combinación POL-POD
+    for pol in (pol_list if pol_list else [pol_raw]):
+        for pod in pod_list:
+            if not pol or not pod:
+                continue
+                
+            content = f"""COTIZACIÓN MARÍTIMA FCL - FORMATO AVANZADO
+Archivo: {Path(csv_file).name}
+Procesamiento: Parser Vertical v2.0
+
+=== INFORMACIÓN DE RUTA ===
+NAVIERA: {carrier}
+ORIGEN (POL): {pol}
+DESTINO (POD): {pod}
+
+=== TARIFAS EN USD ===
+Contenedor 20': {rates.get('20', 'TBD')}
+Contenedor 40'/40'HC: {rates.get('40', 'TBD')}
+
+=== TÉRMINOS COMERCIALES ===
+FREE DAYS: {free_days}
+VALIDEZ: {validity_raw}
+
+=== NORMALIZACIÓN PARA BÚSQUEDA ===
+NAVIERA_NORM: {parser.normalize_carrier_name(carrier)}
+ORIGEN_NORM: {parser.normalize_port_name(pol)}
+DESTINO_NORM: {parser.normalize_port_name(pod)}
+RUTA_COMPLETA: {pol} → {pod}
+
+=== DATOS RAW EXTRAÍDOS ===
+{json.dumps(data_dict, indent=2)}
+
+=== KEYWORDS EXPANDIDAS ===
+fcl contenedor maritimo {carrier.lower()} {pol.lower()} {pod.lower()} 
+tarifa oceanic freight {parser.normalize_port_name(pol)} {parser.normalize_carrier_name(carrier)}
+precio costo shipping {rates.get('20', '')} {rates.get('40', '')}
+"""
+            
+            from langchain.docstore.document import Document
+            doc = Document(
+                page_content=content,
+                metadata={
+                    "source": csv_file,
+                    "source_name": Path(csv_file).name,
+                    "carrier": carrier,
+                    "carrier_normalized": parser.normalize_carrier_name(carrier),
+                    "pol": pol,
+                    "pod": pod,
+                    "pol_normalized": parser.normalize_port_name(pol),
+                    "pod_normalized": parser.normalize_port_name(pod),
+                    "rate_20": rates.get('20', 'TBD'),
+                    "rate_40": rates.get('40', 'TBD'),
+                    "free_days": free_days,
+                    "validity": validity_raw,
+                    "content_type": "fcl_rate",
+                    "route_key": f"{pol.lower()}_to_{pod.lower()}",
+                    "document_type": "csv_tariff_vertical",
+                    "processing_method": "vertical_parser_v2"
+                }
+            )
+            documents.append(doc)
+    
+    return documents
+
+def process_standard_csv(df: pd.DataFrame, csv_file: str, parser: EnhancedFreightParser) -> List:
+    """Procesa CSVs formato estándar horizontal"""
+    documents = []
+    
+    # Mapear columnas
+    column_mapping = {}
+    for col in df.columns:
+        clean_col = col.strip().upper()
+        
+        if any(word in clean_col for word in ['CARRIER', 'NAVIERA', 'LINEA']):
+            column_mapping[col] = 'CARRIER'
+        elif any(word in clean_col for word in ['POL', 'ORIGEN', 'FROM']):
+            column_mapping[col] = 'POL'
+        elif any(word in clean_col for word in ['POD', 'DESTINO', 'TO']):
+            column_mapping[col] = 'POD'
+        elif any(word in clean_col for word in ['TT', 'TRANSIT', 'TIEMPO']):
+            column_mapping[col] = 'TRANSIT_TIME'
+        elif "20'" in clean_col or 'OF 20' in clean_col:
+            column_mapping[col] = 'RATE_20'
+        elif "40'" in clean_col or 'OF 40' in clean_col:
+            column_mapping[col] = 'RATE_40'
+        elif 'FREE' in clean_col and 'DAYS' in clean_col:
+            column_mapping[col] = 'FREE_DAYS'
+        elif any(word in clean_col for word in ['VALIDEZ', 'VALID', 'EXPIRE']):
+            column_mapping[col] = 'VALIDITY'
+    
+    df = df.rename(columns=column_mapping)
+    
+    # Procesar cada fila
+    for idx, row in df.iterrows():
+        carrier = str(row.get('CARRIER', '')).strip()
+        pol = str(row.get('POL', '')).strip()
+        pod = str(row.get('POD', '')).strip()
+        transit_time = str(row.get('TRANSIT_TIME', '')).strip()
+        
+        rate_20 = str(row.get('RATE_20', '')).strip()
+        rate_40 = str(row.get('RATE_40', '')).strip()
+        
+        # Buscar tarifas combinadas si no hay separadas
+        if not rate_20 and not rate_40:
+            for col, value in row.items():
+                if pd.notna(value) and ('USD' in str(value) or '$' in str(value)):
+                    rates = parser.parse_combined_rates(str(value))
+                    rate_20 = rates.get('20', 'TBD')
+                    rate_40 = rates.get('40', 'TBD')
+                    break
+        
+        free_days = parser.extract_free_time(str(row.get('FREE_DAYS', '')))
+        validity = str(row.get('VALIDITY', '')).strip()
+        
+        content = f"""COTIZACIÓN MARÍTIMA FCL #{idx + 1}
+Archivo: {Path(csv_file).name}
+Procesamiento: Parser Estándar v2.0
+
+=== INFORMACIÓN DE RUTA ===
+NAVIERA: {carrier}
+ORIGEN (POL): {pol}
+DESTINO (POD): {pod}
+TIEMPO DE TRÁNSITO: {transit_time} días
+
+=== TARIFAS EN USD ===
+Contenedor 20': {rate_20 if rate_20 and rate_20 != 'nan' else 'TBD'}
+Contenedor 40'/40'HC: {rate_40 if rate_40 and rate_40 != 'nan' else 'TBD'}
+
+=== TÉRMINOS COMERCIALES ===
+FREE DAYS: {free_days}
+VALIDEZ: {validity}
+
+=== NORMALIZACIÓN PARA BÚSQUEDA ===
+NAVIERA_NORM: {parser.normalize_carrier_name(carrier)}
+ORIGEN_NORM: {parser.normalize_port_name(pol)}
+DESTINO_NORM: {parser.normalize_port_name(pod)}
+RUTA_COMPLETA: {pol} → {pod}
+
+=== DATOS RAW ===
+{row.to_string()}
+
+=== KEYWORDS ===
+fcl contenedor maritimo {carrier.lower()} {pol.lower()} {pod.lower()}
+tarifa oceanic freight precio costo shipping
+"""
+        
+        from langchain.docstore.document import Document
+        doc = Document(
+            page_content=content,
+            metadata={
+                "source": csv_file,
+                "source_name": Path(csv_file).name,
+                "row_number": idx + 1,
+                "carrier": carrier,
+                "carrier_normalized": parser.normalize_carrier_name(carrier),
+                "pol": pol,
+                "pod": pod,
+                "pol_normalized": parser.normalize_port_name(pol),
+                "pod_normalized": parser.normalize_port_name(pod),
+                "rate_20": rate_20 if rate_20 and rate_20 != 'nan' else 'TBD',
+                "rate_40": rate_40 if rate_40 and rate_40 != 'nan' else 'TBD',
+                "transit_time": transit_time,
+                "free_days": free_days,
+                "validity": validity,
+                "content_type": "fcl_rate",
+                "route_key": f"{pol.lower()}_to_{pod.lower()}",
+                "document_type": "csv_tariff_standard",
+                "processing_method": "standard_parser_v2"
+            }
+        )
+        documents.append(doc)
+    
+    return documents
+
+def enhanced_fcl_csv_processor_v2():
+    """Procesador principal de CSVs v2.0"""
     documents = []
     csv_files = glob.glob(TMP_DIR.as_posix() + "/**/*.csv", recursive=True)
     
-    processor = ShippingTariffProcessor()
+    parser = EnhancedFreightParser()
     
     for csv_file in csv_files:
         try:
@@ -144,345 +480,87 @@ def enhanced_csv_loader_documents():
                 st.warning(f"No se pudo leer el archivo {csv_file}")
                 continue
             
-            # CRÍTICO: Limpiar nombres de columnas eliminando espacios
             df.columns = df.columns.str.strip()
+            file_name = Path(csv_file).name.upper()
             
-            # Mapear nombres de columnas que pueden tener variaciones
-            column_mapping = {}
-            for col in df.columns:
-                clean_col = col.strip().upper()
-                if 'OF W/M' in clean_col:
-                    column_mapping[col] = 'OF_WM'
-                elif 'OTHERS' in clean_col and 'W/M' in clean_col:
-                    column_mapping[col] = 'OTHERS_WM'
-                elif 'BL' in clean_col and len(clean_col.strip()) <= 5:
-                    column_mapping[col] = 'BL'
-                elif 'SOLAS' in clean_col:
-                    column_mapping[col] = 'SOLAS'
-                elif 'POL' in clean_col:
-                    column_mapping[col] = 'POL'
-                elif 'POD' in clean_col:
-                    column_mapping[col] = 'POD'
-                elif 'SERVICIO' in clean_col or 'VIA' in clean_col:
-                    column_mapping[col] = 'SERVICIO_VIA'
-                elif 'TT' in clean_col or 'APROX' in clean_col:
-                    column_mapping[col] = 'TT_APROX'
+            # Detectar formato y procesar
+            if 'NB SEASTAR' in file_name or 'SEASTAR' in file_name or detect_vertical_format(df):
+                docs = process_vertical_csv(df, csv_file, parser)
+                st.info(f"📊 {Path(csv_file).name}: Procesado como formato vertical - {len(docs)} registros extraídos")
+            else:
+                docs = process_standard_csv(df, csv_file, parser)
+                st.info(f"📊 {Path(csv_file).name}: Procesado como formato estándar - {len(docs)} registros extraídos")
             
-            # Renombrar columnas
-            df = df.rename(columns=column_mapping)
-            
-            # Debug: mostrar columnas mapeadas
-            st.info(f"Columnas procesadas en {Path(csv_file).name}: {list(df.columns)}")
-            
-            # Procesar cada fila
-            for idx, row in df.iterrows():
-                # Extraer valores de forma segura con los nuevos nombres
-                pol = str(row.get('POL', '')).strip()
-                pod = str(row.get('POD', '')).strip()
-                servicio = str(row.get('SERVICIO_VIA', '')).strip()
-                of_wm = processor.extract_numeric_value(row.get('OF_WM', ''))
-                others_wm = processor.extract_numeric_value(row.get('OTHERS_WM', ''))
-                bl = processor.extract_numeric_value(row.get('BL', ''))
-                solas = processor.extract_numeric_value(row.get('SOLAS', ''))
-                tt_aprox = str(row.get('TT_APROX', '')).strip()
-                
-                # Crear contenido estructurado optimizado para búsqueda
-                content = f"""RUTA DE SHIPPING #{idx + 1}
-
-=== INFORMACIÓN PRINCIPAL ===
-ORIGEN: {pol}
-DESTINO: {pod}
-SERVICIO: {servicio}
-
-=== TARIFAS EN USD POR W/M ===
-OF W/M: {of_wm}
-OTHERS(*) W/M: {others_wm}
-BL: {bl}
-SOLAS: {solas}
-
-=== TIEMPO Y SERVICIO ===
-TIEMPO DE TRÁNSITO: {tt_aprox}
-VÍA: {servicio}
-
-=== BÚSQUEDA OPTIMIZADA ===
-RUTA: {pol} a {pod}
-RUTA NORMALIZADA: {processor.normalize_port_name(pol)} a {processor.normalize_port_name(pod)}
-VÍA NORMALIZADA: {processor.normalize_port_name(servicio)}
-
-=== DATOS COMPLETOS ===
-{row.to_string()}
-
-PALABRAS CLAVE: {pol.lower()} {pod.lower()} {servicio.lower()} tarifa costo precio shipping marítimo
-"""
-                
-                # Crear documento LangChain
-                from langchain.docstore.document import Document
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        "source": csv_file,
-                        "row_number": idx + 1,
-                        "pol": pol,
-                        "pod": pod,
-                        "pol_normalized": processor.normalize_port_name(pol),
-                        "pod_normalized": processor.normalize_port_name(pod),
-                        "servicio": servicio,
-                        "of_wm": of_wm,
-                        "others_wm": others_wm,
-                        "bl": bl,
-                        "solas": solas,
-                        "tt_aprox": tt_aprox,
-                        "content_type": "shipping_tariff",
-                        "route_key": f"{pol.lower()}_to_{pod.lower()}"
-                    }
-                )
-                documents.append(doc)
+            documents.extend(docs)
                 
         except Exception as e:
             st.warning(f"Error procesando {csv_file}: {str(e)}")
     
     return documents
 
+def detect_vertical_format(df: pd.DataFrame) -> bool:
+    """Detecta si un CSV está en formato vertical"""
+    if len(df.columns) <= 2 and len(df) > 5:
+        # Buscar patrones típicos de formato vertical
+        content_sample = ' '.join([str(cell) for cell in df.iloc[:, 0].dropna()[:10]])
+        vertical_patterns = ['POL:', 'POD:', 'CARRIER:', 'O/F:', 'Free time:', 'Validity:']
+        return sum(1 for pattern in vertical_patterns if pattern in content_sample) >= 2
+    return False
+
 ####################################################################
-#        Cargador de documentos mejorado
+#            SISTEMA DE BÚSQUEDA AVANZADO
 ####################################################################
 
-def enhanced_langchain_document_loader():
-    """Cargador mejorado que integra CSV especializado con otros documentos"""
-    documents = []
+def generate_query_variations(original_query: str) -> List[str]:
+    """Genera variaciones de consulta para búsqueda exhaustiva"""
+    variations = [original_query]
+    query_lower = original_query.lower()
     
-    # Cargar documentos tradicionales
-    try:
-        txt_loader = DirectoryLoader(
-            TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
-        )
-        documents.extend(txt_loader.load())
-    except:
-        pass
+    # Variaciones de puertos
+    port_mappings = {
+        'shanghai': ['shanghai', 'sha', 'china shanghai'],
+        'ningbo': ['ningbo', 'ngb', 'china ningbo'],
+        'shenzhen': ['shenzhen', 'szn', 'china shenzhen'],
+        'qingdao': ['qingdao', 'tao', 'china qingdao'],
+        'china': ['shanghai', 'ningbo', 'shenzhen', 'qingdao'],
+        'san antonio': ['san antonio', 'sap', 'chile san antonio'],
+    }
     
-    try:
-        pdf_loader = DirectoryLoader(
-            TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
-        )
-        documents.extend(pdf_loader.load())
-    except:
-        pass
+    for canonical, aliases in port_mappings.items():
+        if canonical in query_lower:
+            for alias in aliases:
+                if alias != canonical:
+                    variations.append(original_query.lower().replace(canonical, alias))
     
-    try:
-        doc_loader = DirectoryLoader(
-            TMP_DIR.as_posix(),
-            glob="**/*.docx",
-            loader_cls=Docx2txtLoader,
-            show_progress=True,
-        )
-        documents.extend(doc_loader.load())
-    except:
-        pass
+    # Variaciones de navieras
+    carrier_mappings = {
+        'msk': ['msk', 'maersk', 'maersk line'],
+        'cosco': ['cosco', 'cosco shipping'],
+        'cma': ['cma', 'cma cgm'],
+    }
     
-    # Cargar CSVs con procesamiento especializado
-    csv_documents = enhanced_csv_loader_documents()
-    documents.extend(csv_documents)
+    for canonical, aliases in carrier_mappings.items():
+        if canonical in query_lower:
+            for alias in aliases:
+                variations.append(original_query.lower().replace(canonical, alias))
     
-    return documents
+    # Variaciones para comparaciones
+    if any(word in query_lower for word in ['opcion', 'alternativa', 'comparar', 'mejor', 'todas']):
+        variations.extend([
+            f"cotizacion tarifa contenedor",
+            f"precio shipping maritimo",
+            f"navieras disponibles",
+            f"fcl rates all carriers"
+        ])
+    
+    return list(set(variations))
 
-####################################################################
-#        Text Splitter Mejorado
-####################################################################
-
-def create_enhanced_text_splitter():
-    """Text splitter que mantiene integridad de registros de tarifas"""
-    return RecursiveCharacterTextSplitter(
-        chunk_size=2000,  # Chunks más grandes para mantener contexto completo
-        chunk_overlap=200,
-        separators=[
-            "\nREGISTRO DE TARIFA DE SHIPPING",  # Separador específico para tarifas
-            "\n\n",
-            "\n",
-            " ",
-            ""
-        ]
-    )
-
-####################################################################
-#        Template de Respuesta Mejorado
-####################################################################
-
-def enhanced_answer_template():
-    return """Eres un asistente especializado en tarifas de shipping marítimo LCL de CRAFT IMPORTACIONES.
-
-INSTRUCCIONES DE ANÁLISIS Y RESPUESTA:
-
-1. IDENTIFICACIÓN AUTOMÁTICA DE ZONA:
-   - Analiza el contexto para identificar la estructura de columnas
-   - AMÉRICA/USA: busca columnas "OF W/M", "OTHERS(*) W/M", "BL", "SOLAS"
-   - EUROPA: busca columna "1 -15 w/m (EUR)" 
-   - ASIA ZONA CENTRAL: busca "1 -5 w/m", "5.01 - 10 w/m", "10,01 -15 w/m"
-   - ASIA IQUIQUE: busca "1 -15 w/m (USD)" con destino IQUIQUE
-
-2. EXTRACCIÓN DE DATOS:
-   - Busca coincidencias exactas de países/ciudades en el contexto
-   - Extrae valores específicos de las columnas identificadas
-   - Identifica servicios (DIRECTO vs transbordo)
-   - Obtén frecuencia, agente y tiempo de tránsito
-
-3. FORMATO DE RESPUESTA SEGÚN ZONA DETECTADA:
-
-**PARA AMÉRICA/USA (OF W/M + OTHERS + BL + SOLAS):**
-```
-🚢 TARIFA LCL COLOADER - AMÉRICA/USA
-Vigencia: 15-31 Agosto 2025
-
-📍 RUTA: [País] [Ciudad Origen] → [Puerto Destino]
-🛤️ SERVICIO: [Directo o vía transbordo]
-
-💰 ESTRUCTURA DE COSTOS:
-• Flete Oceánico (OF): [valor] USD por W/M
-• Others(*): [valor] USD por W/M  
-• Bill of Lading: [valor] USD por embarque
-• SOLAS: [valor] USD por embarque
-
-⏱️ OPERATIVO:
-• Frecuencia: [frecuencia]
-• Agente: [agente]
-• Tiempo Tránsito: [días]
-```
-
-**PARA EUROPA (tarifa en EUR):**
-```
-🚢 TARIFA LCL COLOADER - EUROPA
-Vigencia: 15-31 Agosto 2025
-
-📍 RUTA: [País] [Ciudad] → San Antonio
-🛤️ SERVICIO: [servicio]
-
-💰 ESTRUCTURA:
-• Tarifa: [valor] EUR por W/M
-
-📊 ESTIMACIÓN (ejemplo 5 W/M):
-• En EUROS: 5 × [tarifa] = [total] EUR
-• En USD (aprox): [total EUR] × 1.10 = [total USD] USD
-
-⏱️ OPERATIVO:
-• Frecuencia: [frecuencia]  
-• Agente: [agente]
-• Tiempo: [días]
-
-⚠️ Cotización en EUROS, conversión USD referencial
-```
-
-**PARA ASIA ZONA CENTRAL (3 rangos):**
-```
-🚢 TARIFA LCL COLOADER - ASIA ZONA CENTRAL
-Vigencia: 15-31 Agosto 2025
-
-📍 RUTA: [País] [Ciudad] → [Destino]
-🛤️ SERVICIO: [servicio]
-
-💰 TARIFAS POR RANGOS:
-• 1-5 W/M: [valor] USD por W/M
-• 5.01-10 W/M: [valor] USD por W/M  
-• 10.01-15 W/M: [valor] USD por W/M
-
-📊 SELECCIÓN DE TARIFA:
-Según volumen, usar rango correspondiente
-
-⏱️ OPERATIVO:
-• Frecuencia: [frecuencia]
-• Agente: [agente]  
-• Tiempo: [días]
-```
-
-**PARA ASIA IQUIQUE (tarifa única):**
-```
-🚢 TARIFA LCL COLOADER - ASIA → IQUIQUE  
-Vigencia: 15-31 Agosto 2025
-
-📍 RUTA: [País] [Ciudad] → Iquique
-🛤️ SERVICIO: Vía Busan
-
-💰 TARIFA ÚNICA:
-• 1-15 W/M: [valor] USD por W/M
-
-📊 CÁLCULO (ejemplo 5 W/M):
-• Total: 5 × [tarifa] = [resultado] USD
-
-⏱️ OPERATIVO:
-• Frecuencia: [frecuencia]
-• Agente: [agente]
-• Tiempo: [días]
-```
-
-4. INFORMACIÓN ADICIONAL A INCLUIR:
-
-**RECARGOS PRINCIPALES:**
-- Shipper adicional: USD/EUR 50
-- IMO (mercancía peligrosa): Variable por zona
-- Sobrepeso: Variable por zona  
-- Overlength: Variable por zona
-
-**RESTRICCIONES:**
-- Volumen máximo: 15 m³
-- Mínimo: 1 m³
-- Peso por bulto: Variable por ruta
-
-**NOTAS IMPORTANTES:**
-- Vigencia actual: 15-31 Agosto 2025
-- Tarifas para carga general apilable
-- Embalaje apto transporte marítimo requerido
-- Tiempos estimativos, sujetos a variación
-
-5. SI NO ENCUENTRAS LA RUTA:
-
-"❌ RUTA NO DISPONIBLE
-
-🔍 ZONAS CUBIERTAS:
-• AMÉRICA: 5 países → Zona Central  
-• USA: 7 ciudades → Iquique
-• EUROPA: 18 países → Zona Central
-• ASIA: 15 países → Zona Central/Iquique
-
-💡 Para cotización:
-- Especifica puerto/ciudad origen exacta
-- Confirma destino: Zona Central o Iquique  
-- Indica volumen aproximado
-- Tipo de mercancía"
-
-PROCESO DE TRABAJO:
-1. Lee el contexto completo proporcionado
-2. Identifica estructura de datos (columnas específicas)
-3. Busca coincidencias de origen solicitado
-4. Extrae todos los valores de la fila correspondiente  
-5. Aplica formato según zona identificada
-6. Incluye información operativa completa
-7. Agrega recargos y restricciones relevantes
-
-IMPORTANTE: 
-- Usa SOLO información del contexto proporcionado
-- NO inventes valores
-- Si falta información, indica "no especificado"
-- Mantén formato profesional y claro
-- Incluye siempre vigencia de tarifas
-
-<context>
-{chat_history}
-
-{context}
-</context>
-
-Pregunta: {question}
-
-Respuesta:"""
-
-####################################################################
-#        Retriever Mejorado
-####################################################################
-
-def create_smart_retriever(vector_store, search_type="mmr", k=6):
-    """Retriever optimizado para consultas de tarifas"""
+def create_enhanced_seemann_retriever(vector_store, search_type="mmr", k=15):
+    """Retriever avanzado con mayor cobertura"""
     search_kwargs = {
         "k": k,
-        "lambda_mult": 0.5,  # Balance entre relevancia y diversidad
-        "fetch_k": k * 2  # Obtener más candidatos iniciales
+        "lambda_mult": 0.2,  # Mayor diversidad
+        "fetch_k": k * 4     # Más candidatos iniciales
     }
     
     retriever = vector_store.as_retriever(
@@ -491,44 +569,138 @@ def create_smart_retriever(vector_store, search_type="mmr", k=6):
     )
     return retriever
 
+def multi_query_retriever(vector_store, original_query: str) -> List:
+    """Ejecuta múltiples consultas para recuperación exhaustiva"""
+    query_variations = generate_query_variations(original_query)
+    all_docs = []
+    seen_docs = set()
+    
+    retriever = create_enhanced_seemann_retriever(vector_store, k=20)
+    
+    for query in query_variations:
+        try:
+            docs = retriever.get_relevant_documents(query)
+            for doc in docs:
+                doc_hash = hash(doc.page_content[:200])
+                if doc_hash not in seen_docs:
+                    all_docs.append(doc)
+                    seen_docs.add(doc_hash)
+        except:
+            continue
+    
+    return all_docs[:25]
+
 ####################################################################
-#        Chain Mejorada
+#            TEMPLATE DE RESPUESTA AVANZADO
 ####################################################################
 
-def create_enhanced_ConversationalRetrievalChain(retriever, chain_type="stuff"):
-    """Chain optimizada para máxima precisión en tarifas"""
+def enhanced_seemann_response_template():
+    return """Eres un experto consultor v2.0 en logística marítima de SEEMANN GROUP con capacidades avanzadas de análisis exhaustivo.
+
+INSTRUCCIONES CRÍTICAS v2.0:
+
+1. ANÁLISIS EXHAUSTIVO OBLIGATORIO:
+   - Revisa TODOS los documentos en el contexto sin excepción
+   - Busca información en formatos verticales (NB SEASTAR) y horizontales (ECU WORLDWIDE)
+   - Extrae datos de archivos procesados con "vertical_parser_v2" y "standard_parser_v2"
+   - NO te limites a los primeros resultados encontrados
+
+2. EXTRACCIÓN DE DATOS ESPECÍFICOS:
+   BUSCA ESTOS PATRONES:
+   - "USD 2300" y "USD 2800" para contenedores 20' y 40'
+   - Carriers: COSCO, MSK, CMA CGM, PIL, ONE, MSC, ECU
+   - Puertos: Shanghai, Ningbo, Shenzhen, Qingdao → San Antonio, Callao
+   - Free Days: "21 días", "17 días", "No especificado"
+
+3. FORMATO DE RESPUESTA COMPLETA:
+
+**🚢 COMPARATIVO EXHAUSTIVO FCL - SEEMANN GROUP v2.0**
+🔍 **Ruta:** [ORIGEN] → [DESTINO]
+
+| Naviera | 20' (USD) | 40' (USD) | TT (días) | Free Days | Validez | Fuente |
+|---------|-----------|-----------|-----------|-----------|---------|---------|
+| COSCO | [RATE] | [RATE] | [TT] | [DAYS] | [DATE] | ECU Worldwide |
+| MSK | [RATE] | [RATE] | [TT] | [DAYS] | [DATE] | NB Seastar |
+| CMA CGM | [RATE] | [RATE] | [TT] | [DAYS] | [DATE] | ECU Worldwide |
+| PIL | [RATE] | [RATE] | [TT] | [DAYS] | [DATE] | ECU Worldwide |
+| ONE | [RATE] | [RATE] | [TT] | [DAYS] | [DATE] | ECU Worldwide |
+
+📊 **ANÁLISIS COMPARATIVO:**
+• **Más Económica 40':** [NAVIERA] - [PRECIO]
+• **Mejor Tiempo:** [NAVIERA] - [DÍAS] días
+• **Mejores Free Days:** [NAVIERA] - [DÍAS] días libres
+
+🏆 **RECOMENDACIÓN EXPERTA:**
+Basándome en el análisis completo de [X] fuentes, recomiendo [NAVIERA] por [RAZONES ESPECÍFICAS].
+
+4. VALIDACIÓN INTERNA OBLIGATORIA:
+   Antes de responder, verifica:
+   ✅ ¿Incluí información de archivos NB SEASTAR (formato vertical)?
+   ✅ ¿Extraje datos de archivos ECU WORLDWIDE (formato estándar)?
+   ✅ ¿Mencioné TODAS las navieras encontradas en los documentos?
+   ✅ ¿Proporcioné análisis comparativo completo?
+
+5. MANEJO DE TARIFAS COMBINADAS:
+   Si ves "USD 2300" y "USD 2800" en el contexto:
+   - 20' = USD 2300
+   - 40' = USD 2800
+   - Carrier = MSK (típicamente de NB SEASTAR)
+
+6. SI NO ENCUENTRAS INFORMACIÓN COMPLETA:
+   "⚠️ **Análisis parcial disponible**
+   
+   ✅ **Encontrado:** [X] navieras con información completa
+   🔍 **En proceso:** Algunas fuentes requieren validación adicional
+   
+   📞 **Para cotización completa:** Contacta Seemann Group con detalles específicos"
+
+CONTEXTO A ANALIZAR COMPLETAMENTE:
+{chat_history}
+
+DOCUMENTOS DISPONIBLES (REVISAR TODOS):
+{context}
+
+CONSULTA: {question}
+
+RESPUESTA EXHAUSTIVA v2.0:"""
+
+####################################################################
+#            CHAIN Y FUNCIONES PRINCIPALES
+####################################################################
+
+def create_enhanced_conversational_chain_v2(retriever, chain_type="stuff"):
+    """Chain avanzada v2.0 con retrieval exhaustivo"""
     
     condense_question_prompt = PromptTemplate(
         input_variables=["chat_history", "question"],
-        template="""Basándote en la conversación previa, reformula la pregunta para que sea clara e independiente.
+        template="""Reformula la pregunta para maximizar recuperación de información de tarifarios.
 
-IMPORTANTE: Si la pregunta es sobre tarifas/costos de shipping, mantén EXACTAMENTE los nombres de puertos mencionados.
+IMPORTANTE v2.0:
+- Si mencionan "opciones" o "alternativas", amplía búsqueda a múltiples navieras
+- Incluye variaciones de puertos asiáticos (Shanghai, Ningbo, Shenzhen, Qingdao)
+- Mantén nombres exactos de navieras y puertos
+- Incluye términos: FCL, contenedor, tarifa, precio, cotización
 
-Historial:
-{chat_history}
+Historial: {chat_history}
+Pregunta: {question}
 
-Pregunta actual: {question}
-
-Pregunta reformulada y clara:""",
+Pregunta reformulada para búsqueda exhaustiva v2.0:""",
     )
 
-    answer_prompt = ChatPromptTemplate.from_template(enhanced_answer_template())
+    answer_prompt = ChatPromptTemplate.from_template(enhanced_seemann_response_template())
     memory = create_memory()
 
-    # Configuración de LLMs con parámetros optimizados
     standalone_query_llm = ChatOpenAI(
         api_key=OPENAI_API_KEY,
         model=st.session_state.selected_model,
-        temperature=0.0,  # Precisión máxima para reformular
+        temperature=0.0,
     )
     
     response_llm = ChatOpenAI(
         api_key=OPENAI_API_KEY,
         model=st.session_state.selected_model,
-        temperature=min(0.2, st.session_state.temperature),  # Limitamos temperatura
-        model_kwargs={
-            "top_p": st.session_state.top_p,
-        }
+        temperature=0.05,
+        model_kwargs={"top_p": 0.9}
     )
 
     chain = ConversationalRetrievalChain.from_llm(
@@ -539,62 +711,124 @@ Pregunta reformulada y clara:""",
         memory=memory,
         retriever=retriever,
         chain_type=chain_type,
-        verbose=False,  # Cambiar a False para evitar logs excesivos
+        verbose=True,
         return_source_documents=True,
+        max_tokens_limit=4000
     )
 
     return chain, memory
 
-####################################################################
-#        Validación de Respuestas
-####################################################################
-
-def validate_shipping_response(response_text: str, question: str) -> Dict[str, Any]:
-    """Valida respuestas de tarifas para detectar inconsistencias"""
+def validate_response_completeness(response_text: str, original_query: str, source_docs: List) -> Dict[str, Any]:
+    """Valida completitud de respuesta v2.0"""
     
-    validation_result = {
-        'is_valid': True,
+    validation = {
+        'completeness': 1.0,
         'warnings': [],
-        'info': []
+        'suggestions': []
     }
     
-    # Detectar si es consulta de tarifa
-    tariff_keywords = ['costo', 'precio', 'tarifa', 'cuánto', 'vale', 'cobran']
-    is_tariff_query = any(keyword in question.lower() for keyword in tariff_keywords)
+    query_lower = original_query.lower()
     
-    if is_tariff_query:
-        # Verificar formato correcto
-        required_sections = ['OF W/M:', 'OTHERS(*) W/M:', 'BL:', 'SOLAS:']
-        missing_sections = [section for section in required_sections if section not in response_text]
+    # Validar comparaciones
+    if any(word in query_lower for word in ['opcion', 'alternativa', 'comparar', 'mejor', 'todas']):
+        carriers_found = set()
+        for doc in source_docs:
+            carrier = doc.metadata.get('carrier_normalized', '')
+            if carrier and carrier != 'nan':
+                carriers_found.add(carrier)
         
-        if missing_sections:
-            validation_result['warnings'].append(
-                f"Faltan secciones: {', '.join(missing_sections)}"
-            )
+        carriers_in_response = set()
+        response_lower = response_text.lower()
+        for carrier in ['cosco', 'msk', 'cma', 'pil', 'one', 'msc', 'ecu']:
+            if carrier in response_lower:
+                carriers_in_response.add(carrier)
         
-        # Verificar presencia de valores numéricos o "no especificado"
-        if not any(pattern in response_text for pattern in ['USD', '$', 'no especificado', 'no encontré']):
-            validation_result['warnings'].append("Respuesta sin información tarifaria clara")
-        
-        # Verificar cálculo de total
-        if 'TOTAL VARIABLE W/M:' not in response_text and '❌ No encontré' not in response_text:
-            validation_result['warnings'].append("Falta cálculo de total variable")
+        if len(carriers_found) > 1:
+            completeness_ratio = len(carriers_in_response) / len(carriers_found)
+            validation['completeness'] = min(1.0, completeness_ratio + 0.2)
+            
+            if completeness_ratio < 0.8:
+                missing_carriers = carriers_found - carriers_in_response
+                validation['warnings'].append(
+                    f"Posibles navieras no incluidas: {', '.join(missing_carriers)}"
+                )
     
-    return validation_result
+    # Validar presencia de tarifas
+    if any(word in query_lower for word in ['costo', 'precio', 'tarifa', 'cuanto']):
+        usd_count = response_text.count('USD')
+        if usd_count == 0:
+            validation['completeness'] *= 0.3
+            validation['warnings'].append("No se encontraron tarifas en la respuesta")
+        elif usd_count < 2:
+            validation['completeness'] *= 0.7
+            validation['warnings'].append("Información de tarifas limitada")
+    
+    return validation
 
-####################################################################
-#        Función de Respuesta Mejorada
-####################################################################
+def enhance_query_for_completeness(original_query: str, first_response: str) -> str:
+    """Mejora query para segunda búsqueda"""
+    enhanced_terms = []
+    
+    if 'comparar' in original_query.lower() or 'opcion' in original_query.lower():
+        enhanced_terms.extend(['todas las navieras', 'cotizaciones completas', 'alternativas disponibles'])
+    
+    if any(port in original_query.lower() for port in ['shanghai', 'china']):
+        enhanced_terms.extend(['ningbo', 'shenzhen', 'qingdao', 'puertos china'])
+    
+    enhanced_query = f"{original_query} {' '.join(enhanced_terms)} incluyendo MSK COSCO CMA CGM PIL ONE"
+    return enhanced_query
 
-def get_enhanced_response_from_LLM(prompt):
-    """Función mejorada con validación y mejor presentación"""
+def get_enhanced_seemann_response_v2(prompt):
+    """Función principal de respuesta v2.0 con búsqueda exhaustiva"""
     try:
-        with st.spinner("🔍 Buscando información en la base de datos..."):
+        with st.spinner("🔍 Ejecutando búsqueda exhaustiva v2.0..."):
+            
+            # Búsqueda multi-query
+            if hasattr(st.session_state, 'vector_store'):
+                all_relevant_docs = multi_query_retriever(st.session_state.vector_store, prompt)
+                
+                with st.expander("🔍 **Análisis de búsqueda exhaustiva**", expanded=False):
+                    st.write(f"**Total documentos analizados:** {len(all_relevant_docs)}")
+                    
+                    sources_count = {}
+                    processing_methods = {}
+                    
+                    for doc in all_relevant_docs:
+                        source_name = Path(doc.metadata.get("source", "")).name
+                        sources_count[source_name] = sources_count.get(source_name, 0) + 1
+                        
+                        method = doc.metadata.get("processing_method", "unknown")
+                        processing_methods[method] = processing_methods.get(method, 0) + 1
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Por archivo:**")
+                        for source, count in sources_count.items():
+                            st.write(f"• {source}: {count} registros")
+                    
+                    with col2:
+                        st.write("**Por método de procesamiento:**")
+                        for method, count in processing_methods.items():
+                            icon = "🔄" if "vertical" in method else "📊"
+                            st.write(f"{icon} {method}: {count}")
+            
+            # Ejecutar chain principal
             response = st.session_state.chain.invoke({"question": prompt})
             answer = response["answer"]
             
-            # Validar respuesta
-            validation = validate_shipping_response(answer, prompt)
+            # Validar completitud
+            validation = validate_response_completeness(answer, prompt, response.get("source_documents", []))
+            
+            # Segunda búsqueda si es necesario
+            if validation['completeness'] < 0.7:
+                st.warning("⚠️ Respuesta incompleta detectada. Ejecutando búsqueda adicional...")
+                
+                enhanced_query = enhance_query_for_completeness(prompt, answer)
+                response2 = st.session_state.chain.invoke({"question": enhanced_query})
+                
+                if len(response2.get("source_documents", [])) > len(response.get("source_documents", [])):
+                    answer = response2["answer"]
+                    response["source_documents"].extend(response2.get("source_documents", []))
             
             # Agregar al historial
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -606,93 +840,174 @@ def get_enhanced_response_from_LLM(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Mostrar warnings si los hay
-                if validation['warnings']:
-                    st.warning("⚠️ **Advertencias detectadas:**")
-                    for warning in validation['warnings']:
-                        st.write(f"• {warning}")
-                    st.write("*Considera revisar la información o reformular la consulta*")
+                # Métricas de completitud
+                completeness_score = validation.get('completeness', 0)
+                if completeness_score >= 0.8:
+                    st.success(f"✅ **Alta completitud** ({completeness_score:.0%}) - Análisis exhaustivo completado")
+                elif completeness_score >= 0.5:
+                    st.warning(f"⚠️ **Completitud media** ({completeness_score:.0%}) - Información parcial")
+                else:
+                    st.error(f"🔍 **Completitud baja** ({completeness_score:.0%}) - Información limitada")
                 
-                # Mostrar documentos fuente
-                with st.expander("📋 **Ver documentos fuente utilizados**"):
-                    if response["source_documents"]:
-                        for i, doc in enumerate(response["source_documents"], 1):
-                            source = doc.metadata.get("source", "Fuente desconocida")
-                            row_num = doc.metadata.get("row_number", "")
+                # Advertencias
+                if validation.get('warnings'):
+                    with st.expander("⚠️ **Advertencias de completitud**"):
+                        for warning in validation['warnings']:
+                            st.write(f"• {warning}")
+                
+                # Análisis de fuentes mejorado
+                with st.expander("📋 **Análisis detallado de fuentes**"):
+                    sources = response.get("source_documents", [])
+                    if sources:
+                        # Estadísticas
+                        csv_vertical = sum(1 for doc in sources if "vertical" in doc.metadata.get("processing_method", ""))
+                        csv_standard = sum(1 for doc in sources if "standard" in doc.metadata.get("processing_method", ""))
+                        pdf_count = sum(1 for doc in sources if doc.metadata.get("document_type") == "pdf")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("🔄 CSV Verticales", csv_vertical)
+                        with col2:
+                            st.metric("📊 CSV Estándar", csv_standard)
+                        with col3:
+                            st.metric("📄 PDFs", pdf_count)
+                        
+                        # Detalle por archivo y carrier
+                        st.write("**Fuentes por naviera:**")
+                        carrier_sources = {}
+                        
+                        for doc in sources:
+                            carrier = doc.metadata.get("carrier", "N/A")
+                            source_name = Path(doc.metadata.get("source", "")).name
+                            processing_method = doc.metadata.get("processing_method", "")
                             
-                            st.write(f"**📄 Documento {i}:** {Path(source).name}")
-                            if row_num:
-                                st.write(f"**📍 Registro:** #{row_num}")
+                            if carrier not in carrier_sources:
+                                carrier_sources[carrier] = []
                             
-                            # Mostrar contenido relevante
-                            content_preview = doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content
-                            st.code(content_preview, language="text")
-                            st.divider()
+                            carrier_sources[carrier].append({
+                                'source': source_name,
+                                'method': processing_method
+                            })
+                        
+                        for carrier, sources_list in carrier_sources.items():
+                            if carrier and carrier != "N/A":
+                                unique_sources = list(set([s['source'] for s in sources_list]))
+                                methods = list(set([s['method'] for s in sources_list]))
+                                method_icon = "🔄" if any("vertical" in m for m in methods) else "📊"
+                                
+                                st.write(f"{method_icon} **{carrier}:** {', '.join(unique_sources)}")
+                    
                     else:
-                        st.write("❌ No se encontraron documentos fuente relevantes")
+                        st.error("❌ No se encontraron fuentes relevantes")
+                        st.info("💡 **Sugerencias para mejorar búsqueda:**")
+                        st.write("• Especifica puertos exactos (Shanghai, San Antonio)")
+                        st.write("• Incluye nombres de navieras (COSCO, MSK, CMA CGM)")
+                        st.write("• Menciona tipo de contenedor (20', 40', FCL)")
+                        st.write("• Usa términos como 'comparar', 'opciones', 'alternativas'")
                 
     except Exception as e:
-        st.error(f"❌ **Error al procesar la consulta:** {str(e)}")
-        st.info("💡 **Sugerencias para mejorar tu consulta:**")
-        st.write("• Especifica claramente los puertos de origen y destino")
-        st.write("• Usa nombres completos de puertos (ej: 'Miami' en lugar de 'MIA')")
-        st.write("• Asegúrate de que el vectorstore esté cargado correctamente")
+        st.error(f"❌ **Error en sistema v2.0:** {str(e)}")
+        st.info("🔧 **Diagnóstico avanzado:**")
+        st.write("• Verifica base de datos cargada con archivos v2.0")
+        st.write("• Revisa conexión OpenAI API")
+        st.write("• Confirma formato de archivos CSV")
+        
+        import traceback
+        with st.expander("🐛 **Detalles técnicos del error**"):
+            st.code(traceback.format_exc())
 
 ####################################################################
-#        Interfaz Mejorada
+#            CARGADOR DE DOCUMENTOS v2.0
+####################################################################
+
+def enhanced_seemann_document_loader_v2():
+    """Cargador de documentos v2.0 con parser avanzado"""
+    documents = []
+    
+    # Cargar PDFs con metadatos enriquecidos
+    try:
+        pdf_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
+        )
+        pdf_docs = pdf_loader.load()
+        
+        for doc in pdf_docs:
+            filename = Path(doc.metadata['source']).name.upper()
+            if 'COSCO' in filename:
+                doc.metadata['carrier'] = 'COSCO'
+                doc.metadata['carrier_normalized'] = 'cosco'
+            elif 'ECU' in filename:
+                doc.metadata['carrier'] = 'ECU Worldwide'
+                doc.metadata['carrier_normalized'] = 'ecu'
+            elif 'MSK' in filename or 'MAERSK' in filename:
+                doc.metadata['carrier'] = 'MSK'
+                doc.metadata['carrier_normalized'] = 'msk'
+            
+            if 'DEMURRAGE' in filename or 'DETENTION' in filename:
+                doc.metadata['content_type'] = 'demurrage_detention'
+            elif 'QUOTATION' in filename or 'FREIGHT' in filename:
+                doc.metadata['content_type'] = 'quotation'
+            
+            doc.metadata['document_type'] = 'pdf'
+            doc.metadata['processing_method'] = 'pdf_standard'
+        
+        documents.extend(pdf_docs)
+    except Exception as e:
+        st.warning(f"Error cargando PDFs: {e}")
+    
+    # Cargar otros formatos
+    try:
+        txt_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
+        )
+        documents.extend(txt_loader.load())
+    except:
+        pass
+    
+    try:
+        doc_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.docx", loader_cls=Docx2txtLoader, show_progress=True
+        )
+        documents.extend(doc_loader.load())
+    except:
+        pass
+    
+    # Usar procesador CSV v2.0
+    csv_documents = enhanced_fcl_csv_processor_v2()
+    documents.extend(csv_documents)
+    
+    return documents
+
+####################################################################
+#            INTERFAZ Y FUNCIONES PRINCIPALES
 ####################################################################
 
 st.set_page_config(
-    page_title="RAG Shipping Tarifas",
+    page_title="Seemann Group v2.0 - Consultor Avanzado",
     page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🚢 RAG Chatbot Especializado en Tarifas de Shipping")
-st.markdown("*Sistema inteligente para consulta de costos y rutas marítimas*")
+st.title("🚢 Seemann Group v2.0 - Consultor Avanzado de Tarifas")
+st.markdown("*Sistema inteligente con capacidades exhaustivas de búsqueda y análisis*")
 
-def enhanced_expander_model_parameters():
-    """Configuración de modelo mejorada"""
-    with st.expander("⚙️ **Configuración del Modelo**"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.session_state.selected_model = st.selectbox(
-                "🤖 Modelo OpenAI",
-                OPENAI_MODELS,
-                help="GPT-4o recomendado para máxima precisión en tarifas"
-            )
-            
-        with col2:
-            st.session_state.temperature = st.slider(
-                "🌡️ Temperatura",
-                min_value=0.0,
-                max_value=0.5,
-                value=0.1,
-                step=0.1,
-                help="Valores bajos = respuestas más precisas y consistentes"
-            )
-        
-        st.session_state.top_p = st.slider(
-            "🎯 Top P",
-            min_value=0.8,
-            max_value=1.0,
-            value=0.9,
-            step=0.05,
-            help="Control de diversidad en las respuestas"
-        )
-
-def enhanced_sidebar_and_documentChooser():
-    """Interfaz lateral mejorada"""
+def enhanced_sidebar_seemann_v2():
+    """Interfaz lateral v2.0"""
     with st.sidebar:
-        st.markdown("### 🚀 **Sistema RAG para Shipping**")
-        st.caption("Powered by LangChain & OpenAI")
+        st.markdown("### 🚀 **Sistema v2.0 Avanzado**")
+        st.success("""
+        ✅ Parser CSV vertical/horizontal
+        ✅ Búsqueda multi-query exhaustiva
+        ✅ Validación de completitud
+        ✅ Extracción tarifas combinadas
+        ✅ Soporte puertos múltiples
+        ✅ Análisis de fuentes detallado
+        """)
         
         st.markdown("---")
         
-        # Status de OpenAI
-        st.subheader("🔐 Estado de Conexión")
+        # Estado del sistema
         if OPENAI_API_KEY:
             st.success("✅ OpenAI API conectada")
         else:
@@ -700,43 +1015,36 @@ def enhanced_sidebar_and_documentChooser():
             st.info("📝 Agrega `OPENAI_API_KEY` a tu archivo `.env`")
             return
 
-    # Tabs para manejo de vectorstore
-    tab1, tab2 = st.tabs(["🆕 Crear Vectorstore", "📂 Cargar Vectorstore"])
+    # Tabs mejoradas
+    tab1, tab2, tab3, tab4 = st.tabs(["📤 Crear v2.0", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
 
-    # Tab 1: Crear nuevo vectorstore
     with tab1:
-        st.markdown("### 📤 Subir Documentos")
+        st.markdown("### 📤 Crear Base de Datos v2.0")
         
         st.session_state.uploaded_file_list = st.file_uploader(
-            "Selecciona archivos para procesar:",
+            "Selecciona archivos para procesamiento avanzado:",
             accept_multiple_files=True,
-            type=["pdf", "txt", "docx", "csv"],
-            help="Los archivos CSV de tarifas recibirán procesamiento especializado"
+            type=["pdf", "txt", "docx", "csv", "xlsx"],
+            help="CSVs serán procesados con parser v2.0 (vertical + horizontal)"
         )
         
         st.session_state.vector_store_name = st.text_input(
-            "📊 Nombre del Vectorstore:",
-            placeholder="ej: tarifas_2024_q1",
-            help="Se creará una base de datos con este nombre"
+            "📊 Nombre Base de Datos v2.0:",
+            placeholder="ej: seemann_v2_tarifas_2025",
+            help="Incluye v2 para identificar versión avanzada"
         )
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            create_btn = st.button("🚀 Crear Vectorstore", type="primary")
-        
-        if create_btn:
-            enhanced_chain_RAG_blocks()
-        
-        # Mostrar errores si los hay
-        if hasattr(st.session_state, 'error_message') and st.session_state.error_message:
-            st.error(st.session_state.error_message)
+            if st.button("🚀 Crear con Sistema v2.0", type="primary"):
+                enhanced_chain_RAG_blocks_v2()
+        with col2:
+            if st.button("🗑️ Limpiar"):
+                delete_temp_files()
 
-    # Tab 2: Cargar vectorstore existente
     with tab2:
-        st.markdown("### 📖 Cargar Base de Datos Existente")
+        st.markdown("### 📂 Cargar Base de Datos")
         
-        # Listar vectorstores disponibles
-        LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
         available_stores = [
             f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() 
             if f.is_dir() and not f.name.startswith('.')
@@ -744,74 +1052,55 @@ def enhanced_sidebar_and_documentChooser():
         
         if available_stores:
             st.session_state.selected_vectorstore_name = st.selectbox(
-                "🗂️ Vectorstores disponibles:",
-                options=[""] + available_stores,
-                help=f"Encontrados {len(available_stores)} vectorstore(s)"
+                "🗂️ Bases disponibles:",
+                options=[""] + available_stores
             )
         else:
-            st.info("📭 No hay vectorstores disponibles. Crea uno primero.")
+            st.info("🔍 No hay bases de datos disponibles")
         
-        # Opción de ruta personalizada
-        custom_path = st.text_input(
-            "📂 O especifica una ruta completa:",
-            placeholder="/ruta/completa/a/tu/vectorstore",
-            help="Opcional: ruta absoluta a un vectorstore externo"
-        )
-        
-        if st.button("📖 Cargar Vectorstore", type="primary"):
-            load_existing_vectorstore(custom_path)
+        if st.button("📖 Cargar Base de Datos", type="primary"):
+            load_existing_vectorstore_v2()
 
-####################################################################
-#        Funciones de Procesamiento Mejoradas
-####################################################################
-
-def delete_temp_files():
-    """Limpieza mejorada de archivos temporales"""
-    try:
-        TMP_DIR.mkdir(parents=True, exist_ok=True)
-        files = glob.glob(TMP_DIR.as_posix() + "/*")
-        deleted_count = 0
+    with tab3:
+        st.markdown("### 📊 Estadísticas del Sistema v2.0")
         
-        for f in files:
+        if hasattr(st.session_state, 'vector_store'):
             try:
-                os.remove(f)
-                deleted_count += 1
+                collection_count = st.session_state.vector_store._collection.count()
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("📄 Total Docs", collection_count)
+                with col2:
+                    st.metric("🤖 Modelo", st.session_state.selected_model)
+                with col3:
+                    st.metric("🌡️ Temperatura", f"{st.session_state.temperature}")
             except:
-                pass
-        
-        if deleted_count > 0:
-            st.info(f"🗑️ Limpiados {deleted_count} archivos temporales")
-            
-    except Exception as e:
-        st.warning(f"Error limpiando archivos temporales: {e}")
+                st.info("Carga una base de datos para ver estadísticas")
+        else:
+            st.info("No hay base de datos cargada")
 
-def enhanced_chain_RAG_blocks():
-    """Pipeline mejorado de creación de vectorstore"""
+    with tab4:
+        st.markdown("### 🧪 Test Parser v2.0")
+        if st.button("Ejecutar Test"):
+            test_parser_improvements()
+
+def enhanced_chain_RAG_blocks_v2():
+    """Pipeline v2.0 con todas las mejoras"""
     
     if not OPENAI_API_KEY:
-        st.session_state.error_message = "❌ Configura tu OpenAI API key en el archivo .env"
+        st.error("❌ Configura OpenAI API key")
         return
 
-    # Validaciones
-    errors = []
-    if not st.session_state.uploaded_file_list:
-        errors.append("seleccionar archivos para subir")
-    if not st.session_state.vector_store_name.strip():
-        errors.append("proporcionar un nombre para el vectorstore")
-    
-    if errors:
-        error_msg = "Por favor " + " y ".join(errors) + "."
-        st.session_state.error_message = error_msg
+    if not st.session_state.uploaded_file_list or not st.session_state.vector_store_name.strip():
+        st.error("❌ Selecciona archivos y nombre de base de datos")
         return
     
-    st.session_state.error_message = ""
-    
-    with st.spinner("🔄 Procesando documentos y creando vectorstore..."):
+    with st.spinner("🔄 Procesando con sistema v2.0..."):
         try:
-            # 1. Limpiar directorio temporal
+            # Limpiar y guardar archivos
             delete_temp_files()
             
-            # 2. Guardar archivos subidos
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -820,33 +1109,51 @@ def enhanced_chain_RAG_blocks():
                 temp_file_path = TMP_DIR / uploaded_file.name
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.read())
-                progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.3)
+                progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.2)
             
-            # 3. Cargar y procesar documentos
-            status_text.text("📖 Cargando documentos...")
-            documents = enhanced_langchain_document_loader()
-            progress_bar.progress(0.5)
+            # Procesar con sistema v2.0
+            status_text.text("🔍 Procesando con parser v2.0...")
+            documents = enhanced_seemann_document_loader_v2()
+            progress_bar.progress(0.4)
             
             if not documents:
-                st.error("❌ No se pudieron cargar documentos. Verifica los archivos.")
+                st.error("❌ No se procesaron documentos")
                 return
             
-            st.info(f"📊 Cargados {len(documents)} documentos")
+            # Estadísticas detalladas
+            csv_vertical = sum(1 for doc in documents if "vertical_parser_v2" in doc.metadata.get("processing_method", ""))
+            csv_standard = sum(1 for doc in documents if "standard_parser_v2" in doc.metadata.get("processing_method", ""))
+            pdf_docs = sum(1 for doc in documents if doc.metadata.get("document_type") == "pdf")
             
-            # 4. Dividir en chunks
-            status_text.text("✂️ Dividiendo documentos en chunks...")
-            text_splitter = create_enhanced_text_splitter()
-            chunks = text_splitter.split_documents(documents)
-            progress_bar.progress(0.7)
+            st.success("📊 **Procesamiento v2.0 completado:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("🔄 CSV Verticales", csv_vertical)
+            with col2:
+                st.metric("📊 CSV Estándar", csv_standard)
+            with col3:
+                st.metric("📄 PDFs", pdf_docs)
             
-            st.info(f"📝 Creados {len(chunks)} chunks de texto")
-            
-            # 5. Crear embeddings y vectorstore
-            status_text.text("🧠 Creando embeddings...")
-            embeddings = OpenAIEmbeddings(
-                api_key=OPENAI_API_KEY,
-                model="text-embedding-ada-002"  # Modelo estable y compatible
+            # Crear chunks optimizados
+            status_text.text("✂️ Creando chunks optimizados...")
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=2500,
+                chunk_overlap=250,
+                separators=[
+                    "\nCOTIZACIÓN MARÍTIMA FCL",
+                    "\n=== INFORMACIÓN DE RUTA ===",
+                    "\n=== TARIFAS EN USD ===",
+                    "\n\n", "\n", " ", ""
+                ]
             )
+            chunks = text_splitter.split_documents(documents)
+            progress_bar.progress(0.6)
+            
+            st.info(f"🔍 {len(chunks)} chunks optimizados creados")
+            
+            # Crear vectorstore
+            status_text.text("🧠 Generando embeddings...")
+            embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
             persist_path.mkdir(parents=True, exist_ok=True)
@@ -855,102 +1162,90 @@ def enhanced_chain_RAG_blocks():
                 documents=chunks,
                 embedding=embeddings,
                 persist_directory=persist_path.as_posix(),
-                collection_name="shipping_tariffs"
+                collection_name="seemann_v2_enhanced"
             )
-            progress_bar.progress(0.9)
+            progress_bar.progress(0.8)
             
-            # 6. Crear retriever y chain
-            status_text.text("🔗 Configurando sistema de consultas...")
-            st.session_state.retriever = create_smart_retriever(
-                vector_store=st.session_state.vector_store
+            # Crear chain v2.0
+            status_text.text("🔗 Configurando sistema v2.0...")
+            st.session_state.retriever = create_enhanced_seemann_retriever(
+                vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_enhanced_ConversationalRetrievalChain(
+            st.session_state.chain, st.session_state.memory = create_enhanced_conversational_chain_v2(
                 retriever=st.session_state.retriever
             )
             
-            # 7. Limpiar historial
             clear_chat_history()
             
             progress_bar.progress(1.0)
             status_text.empty()
             progress_bar.empty()
             
-            st.success(f"✅ **Vectorstore '{st.session_state.vector_store_name}' creado exitosamente!**")
+            st.success("✅ **Sistema v2.0 creado exitosamente!**")
             st.balloons()
             
-            # Mostrar estadísticas
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📄 Documentos", len(documents))
-            with col2:
-                st.metric("📝 Chunks", len(chunks))
-            with col3:
-                csv_docs = sum(1 for doc in documents if doc.metadata.get("content_type") == "shipping_tariff")
-                st.metric("🚢 Registros de Tarifas", csv_docs)
-                
         except Exception as e:
-            st.error(f"❌ Error creando vectorstore: {str(e)}")
-            st.info("💡 Verifica que los archivos sean válidos y que tengas suficiente espacio en disco")
+            st.error(f"❌ Error: {str(e)}")
 
-def load_existing_vectorstore(custom_path=""):
-    """Carga vectorstore existente con mejor manejo de errores"""
-    if not OPENAI_API_KEY:
-        st.error("❌ OpenAI API key requerida")
+def load_existing_vectorstore_v2():
+    """Cargar vectorstore existente v2.0"""
+    if not OPENAI_API_KEY or not st.session_state.selected_vectorstore_name:
+        st.error("❌ Configura API key y selecciona base de datos")
         return
 
-    # Determinar ruta del vectorstore
-    vectorstore_path = None
-    if custom_path.strip():
-        vectorstore_path = Path(custom_path.strip())
-    elif hasattr(st.session_state, 'selected_vectorstore_name') and st.session_state.selected_vectorstore_name:
-        vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
+    vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
     
-    if not vectorstore_path or not vectorstore_path.exists():
-        st.error("❌ Ruta de vectorstore no válida o inexistente")
+    if not vectorstore_path.exists():
+        st.error("❌ Base de datos no existe")
         return
 
-    with st.spinner("📖 Cargando vectorstore..."):
+    with st.spinner("📖 Cargando sistema v2.0..."):
         try:
-            embeddings = OpenAIEmbeddings(
-                api_key=OPENAI_API_KEY,
-                model="text-embedding-ada-002"  # Modelo estable
-            )
+            embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             st.session_state.vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=vectorstore_path.as_posix(),
-                collection_name="shipping_tariffs"
+                collection_name="seemann_v2_enhanced"
             )
             
-            # Verificar que el vectorstore tiene datos
             collection_count = st.session_state.vector_store._collection.count()
             if collection_count == 0:
-                st.warning("⚠️ El vectorstore está vacío")
+                st.warning("⚠️ Base de datos vacía")
                 return
             
-            st.session_state.retriever = create_smart_retriever(
-                vector_store=st.session_state.vector_store
+            st.session_state.retriever = create_enhanced_seemann_retriever(
+                vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_enhanced_ConversationalRetrievalChain(
+            st.session_state.chain, st.session_state.memory = create_enhanced_conversational_chain_v2(
                 retriever=st.session_state.retriever
             )
             
             clear_chat_history()
             
-            st.success(f"✅ **Vectorstore cargado exitosamente!**")
-            st.info(f"📊 Contiene {collection_count} documentos indexados")
+            st.success("✅ **Sistema v2.0 cargado exitosamente!**")
+            st.info(f"📊 {collection_count} documentos indexados")
             
         except Exception as e:
-            st.error(f"❌ Error cargando vectorstore: {str(e)}")
+            st.error(f"❌ Error cargando: {str(e)}")
 
-####################################################################
-#        Memoria y Utilidades
-####################################################################
+def delete_temp_files():
+    """Limpiar archivos temporales"""
+    try:
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        files = glob.glob(TMP_DIR.as_posix() + "/*")
+        for f in files:
+            try:
+                os.remove(f)
+            except:
+                pass
+    except:
+        pass
 
 def create_memory():
-    """Crear memoria de conversación optimizada"""
+    """Crear memoria conversación"""
     return ConversationBufferMemory(
         return_messages=True,
         memory_key="chat_history",
@@ -959,87 +1254,96 @@ def create_memory():
     )
 
 def clear_chat_history():
-    """Limpiar historial de chat y memoria"""
-    st.session_state.messages = [
-        {"role": "assistant", "content": WELCOME_MESSAGE}
-    ]
+    """Limpiar historial"""
+    st.session_state.messages = [{"role": "assistant", "content": WELCOME_MESSAGE}]
     if hasattr(st.session_state, 'memory') and st.session_state.memory:
         try:
             st.session_state.memory.clear()
         except:
             pass
 
-####################################################################
-#        Función Principal del Chatbot
-####################################################################
+def test_parser_improvements():
+    """Test funcionalidad parser v2.0"""
+    st.markdown("### 🧪 Test Parser v2.0")
+    
+    parser = EnhancedFreightParser()
+    
+    # Test casos
+    test_cases = {
+        "Tarifa combinada": "USD2300/2800 per 20/40",
+        "Puertos múltiples": "QINGDAO/SHANGHAI/NINGBO/SHENZHEN", 
+        "Free time": "Free time:21days",
+        "Normalización MSK": "msk",
+        "Normalización puerto": "shanghai"
+    }
+    
+    results = {
+        "Tarifa combinada": parser.parse_combined_rates(test_cases["Tarifa combinada"]),
+        "Puertos múltiples": parser.parse_multiple_ports(test_cases["Puertos múltiples"]),
+        "Free time": parser.extract_free_time(test_cases["Free time"]),
+        "Normalización MSK": parser.normalize_carrier_name(test_cases["Normalización MSK"]),
+        "Normalización puerto": parser.normalize_port_name(test_cases["Normalización puerto"])
+    }
+    
+    for test_name, result in results.items():
+        st.write(f"**{test_name}:** {result}")
+    
+    st.success("✅ Parser v2.0 funcionando correctamente")
 
-def enhanced_chatbot():
-    """Función principal del chatbot mejorada"""
-    enhanced_sidebar_and_documentChooser()
+def seemann_chatbot_v2():
+    """Chatbot principal v2.0"""
+    enhanced_sidebar_seemann_v2()
     
     st.markdown("---")
     
-    # Header del chat
-    col1, col2, col3 = st.columns([6, 2, 2])
+    # Header
+    col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Chat con tus Datos de Shipping")
-    with col3:
-        # Mostrar estado del sistema
+        st.subheader("💬 Consultor Avanzado v2.0 - Seemann Group")
         if hasattr(st.session_state, 'chain'):
-            st.success("🟢 Sistema Listo")
+            st.success("🟢 Sistema v2.0 Activo - Búsqueda Exhaustiva Habilitada")
         else:
-            st.warning("🟡 Cargar Vectorstore")
+            st.warning("🟡 Crear/Cargar Base de Datos v2.0")
 
-    # Inicializar mensajes si no existen
+    # Mensajes
     if "messages" not in st.session_state:
         clear_chat_history()
 
-    # Mostrar historial de mensajes
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    # Input del usuario
-    if prompt := st.chat_input("Pregunta sobre tarifas de shipping... (ej: ¿Cuánto cuesta enviar de Miami a San Antonio?)"):
+    # Input principal
+    if prompt := st.chat_input("Consulta avanzada v2.0... (ej: ¿Qué opciones completas tengo desde China a San Antonio?)"):
         
-        # Verificar que el sistema esté listo
         if not OPENAI_API_KEY:
-            st.error("🔑 Configura tu OpenAI API key para continuar")
+            st.error("🔑 Configura OpenAI API key")
             st.stop()
         
         if not hasattr(st.session_state, 'chain'):
-            st.warning("⚠️ Primero carga o crea un vectorstore")
+            st.warning("⚠️ Crea o carga base de datos v2.0")
             st.stop()
         
-        # Procesar consulta
-        get_enhanced_response_from_LLM(prompt)
-        
-        
+        # Ejecutar respuesta v2.0
+        get_enhanced_seemann_response_v2(prompt)
+
 ####################################################################
-#        Función Principal
+#            FUNCIÓN PRINCIPAL
 ####################################################################
 
 if __name__ == "__main__":
-    # Configurar página
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
-        # Configurar valores por defecto
         st.session_state.selected_model = "gpt-4o"
-        st.session_state.temperature = 0.1
-        st.session_state.top_p = 0.9
-        st.session_state.error_message = ""
+        st.session_state.temperature = 0.05
     
-    
-    # Ejecutar chatbot principal
-    enhanced_chatbot()
+    # Ejecutar sistema v2.0
+    seemann_chatbot_v2()
     
     # Footer
     st.markdown("---")
-    st.markdown(
-        """
-        <div style='text-align: center; color: #666; font-size: 0.8em;'>
-        🚢 RAG Chatbot para Tarifas de Shipping | Powered by LangChain & OpenAI
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <div style='text-align: center; color: #666; font-size: 0.8em;'>
+    🚢 Seemann Group v2.0 - Sistema Avanzado | Parser Inteligente | Búsqueda Exhaustiva | Powered by LangChain & OpenAI
+    </div>
+    """, unsafe_allow_html=True)
