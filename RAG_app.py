@@ -695,7 +695,6 @@ def enhanced_sidebar_and_documentChooser():
         st.subheader("🔐 Estado de Conexión")
         if OPENAI_API_KEY:
             st.success("✅ OpenAI API conectada")
-            enhanced_expander_model_parameters()
         else:
             st.error("❌ API Key no encontrada")
             st.info("📝 Agrega `OPENAI_API_KEY` a tu archivo `.env`")
@@ -724,10 +723,6 @@ def enhanced_sidebar_and_documentChooser():
         col1, col2 = st.columns([3, 1])
         with col1:
             create_btn = st.button("🚀 Crear Vectorstore", type="primary")
-        with col2:
-            if st.button("🗑️ Limpiar"):
-                st.session_state.uploaded_file_list = None
-                st.session_state.vector_store_name = ""
         
         if create_btn:
             enhanced_chain_RAG_blocks()
@@ -988,10 +983,6 @@ def enhanced_chatbot():
     col1, col2, col3 = st.columns([6, 2, 2])
     with col1:
         st.subheader("💬 Chat con tus Datos de Shipping")
-    with col2:
-        if st.button("🗑️ Limpiar Chat", help="Borra el historial de conversación"):
-            clear_chat_history()
-            st.rerun()
     with col3:
         # Mostrar estado del sistema
         if hasattr(st.session_state, 'chain'):
@@ -1022,40 +1013,8 @@ def enhanced_chatbot():
         
         # Procesar consulta
         get_enhanced_response_from_LLM(prompt)
-
-####################################################################
-#        Sección de Ayuda y Tips
-####################################################################
-
-def show_help_section():
-    """Muestra sección de ayuda y ejemplos"""
-    with st.expander("❓ **Ayuda y Ejemplos de Uso**"):
-        st.markdown("""
-        ### 🎯 **Cómo hacer consultas efectivas:**
         
-        **✅ Consultas recomendadas:**
-        - "¿Cuánto cuesta enviar de Miami a San Antonio?"
-        - "Tarifa de Callao a Valparaíso"
-        - "Tiempo de tránsito de Miami a Guayaquil"
-        - "Precio por tonelada de Santos a Cartagena"
         
-        **❌ Evita consultas vagas:**
-        - "Cuánto cuesta enviar"
-        - "Precios de shipping"
-        - "Tarifas generales"
-        
-        ### 📊 **Información que puedes obtener:**
-        - **OF W/M**: Flete oceánico por peso/medida
-        - **OTHERS(*) W/M**: Otros costos variables
-        - **BL**: Bill of Lading
-        - **SOLAS**: Certificación de seguridad
-        - **Tiempo de tránsito**: Duración estimada del viaje
-        
-        ### 🚢 **Puertos soportados (ejemplos):**
-        - Miami, San Antonio, Callao, Guayaquil
-        - Santos, Cartagena, Puerto Cabello, Buenaventura
-        """)
-
 ####################################################################
 #        Función Principal
 ####################################################################
@@ -1070,8 +1029,6 @@ if __name__ == "__main__":
         st.session_state.top_p = 0.9
         st.session_state.error_message = ""
     
-    # Mostrar sección de ayuda
-    show_help_section()
     
     # Ejecutar chatbot principal
     enhanced_chatbot()
