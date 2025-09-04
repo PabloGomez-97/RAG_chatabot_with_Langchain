@@ -10,3 +10,8 @@ __pycache__/
 README.md
 Dockerfile
 .dockerignore
+data/tmp/
+data/vector_stores/
+*.log
+.vscode/
+.idea/
