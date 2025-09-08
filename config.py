@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ####################################################################
-#              CONFIG SEEMANN GROUP v2.2 - TEMPLATES DINAMICOS
+#              CONFIG SEEMANN GROUP - LCL MARITIME SYSTEM
 ####################################################################
 
 # Get OpenAI API key from environment
@@ -17,29 +17,29 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Assistant language fixed to Spanish
 ASSISTANT_LANGUAGE = "spanish"
-WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado v2.2 en documentación marítima de Seemann Group.
+WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas LCL marítimas de Seemann Group.
 
-🚀 **NUEVAS CAPACIDADES v2.2 - TEMPLATES DINÁMICOS:**
-- Sistema de templates adaptativos según tipo de contenido
-- Procesamiento inteligente de FCL, demurrage, detention y exportación
-- Validación estricta de rutas Puerto Origen → Puerto Destino
-- Análisis contextual automático de documentos heterogéneos
-- Respuestas especializadas por naviera y tipo de servicio
+🚢 **SISTEMA ESPECIALIZADO LCL:**
+- Consultas de tarifas LCL por puerto de origen y destino
+- Información completa de costos por tonelada/m³
+- Detalles de tiempos de tránsito y frecuencias
+- Información de agentes locales y servicios
+- Costos adicionales y observaciones importantes
 
-🚢 **Servicios especializados validados:**
-- Cotizaciones FCL con rutas exactas (20', 40', 40HC)
-- Tarifas de demurrage y detention por puerto y naviera
-- Cotizaciones de exportación (Chile hacia otros países)
-- Comparativas multi-naviera con validación de rutas
-- Análisis de términos comerciales específicos
+💡 **Ejemplos de consultas:**
+- "¿Cuánto cuesta envío LCL desde Shanghai a San Antonio?"
+- "Necesito tarifa desde Buenos Aires a Valparaíso"
+- "¿Qué opciones tengo desde Europa a Chile?"
+- "Muéstrame todas las rutas desde Asia"
 
-💡 **Ejemplos de consultas especializadas:**
-- "¿Cuánto cuesta un contenedor 40' desde Shanghai a San Antonio?"
-- "¿Cuáles son las tarifas de demurrage de COSCO en Perú?"
-- "Necesito exportar desde San Antonio a Callao con COSCO"
-- "Compara todas las opciones desde puertos de China a Chile"
-
-⚡ **NUEVO:** El sistema detecta automáticamente el tipo de consulta y usa el template apropiado.
+📋 **Información que puedo proporcionar:**
+- Costo por tonelada/metro cúbico
+- Tarifa mínima aplicable
+- Tiempo de tránsito aproximado
+- Frecuencia de servicios
+- Agentes locales
+- Costos adicionales (DDT, VGM, etc.)
+- Observaciones especiales por ruta
 """
 
 # Available OpenAI models
@@ -58,285 +58,248 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 ####################################################################
-#            DETECTORES DE TIPO DE CONSULTA v2.2
+#            MAPEO DE PUERTOS PARA LCL
 ####################################################################
 
-def detect_query_type(query: str, source_docs: list = None) -> str:
-    """Detecta el tipo de consulta para usar el template apropiado"""
+PORT_ALIASES = {
+    # Puertos de América
+    'buenos aires': ['buenos aires', 'bue', 'argentina buenos aires', 'ba'],
+    'santos': ['santos', 'sao', 'brasil santos', 'santos brasil'],
+    'rio de janeiro': ['rio de janeiro', 'rio', 'brasil rio', 'gig'],
+    'callao': ['callao', 'cao', 'peru callao', 'lima'],
+    'guayaquil': ['guayaquil', 'gye', 'ecuador guayaquil'],
+    'san antonio': ['san antonio', 'sap', 'chile san antonio', 'val-sap'],
+    'valparaiso': ['valparaiso', 'val', 'chile valparaiso'],
+    
+    # Puertos de Europa
+    'antwerp': ['antwerp', 'anr', 'belgium antwerp', 'amberes'],
+    'rotterdam': ['rotterdam', 'rtm', 'netherlands rotterdam', 'holanda'],
+    'hamburg': ['hamburg', 'ham', 'germany hamburg', 'alemania'],
+    'le havre': ['le havre', 'leh', 'france le havre', 'francia'],
+    'valencia': ['valencia', 'vlc', 'spain valencia', 'españa'],
+    
+    # Puertos de América del Norte
+    'miami': ['miami', 'mia', 'usa miami', 'florida'],
+    'new york': ['new york', 'nyc', 'usa new york', 'nueva york'],
+    'los angeles': ['los angeles', 'lax', 'usa los angeles'],
+    'chicago': ['chicago', 'chi', 'usa chicago'],
+    'houston': ['houston', 'hou', 'usa houston'],
+    
+    # Puertos de Asia
+    'shanghai': ['shanghai', 'sha', 'china shanghai'],
+    'ningbo': ['ningbo', 'ngb', 'china ningbo'],
+    'shenzhen': ['shenzhen', 'szn', 'china shenzhen'],
+    'qingdao': ['qingdao', 'tao', 'china qingdao'],
+    'busan': ['busan', 'pus', 'korea busan', 'corea'],
+    'sydney': ['sydney', 'syd', 'australia sydney'],
+    'melbourne': ['melbourne', 'mel', 'australia melbourne'],
+}
+
+COUNTRY_ALIASES = {
+    'argentina': ['argentina', 'arg'],
+    'brasil': ['brasil', 'brazil', 'bra'],
+    'peru': ['peru', 'per'],
+    'ecuador': ['ecuador', 'ecu'],
+    'chile': ['chile', 'chi'],
+    'belgium': ['belgium', 'bel', 'belgica'],
+    'netherlands': ['netherlands', 'net', 'holanda'],
+    'germany': ['germany', 'ger', 'alemania'],
+    'france': ['france', 'fra', 'francia'],
+    'spain': ['spain', 'esp', 'españa'],
+    'united states': ['united states', 'usa', 'estados unidos'],
+    'china': ['china', 'chn'],
+    'australia': ['australia', 'aus'],
+    'korea': ['korea', 'kor', 'corea'],
+}
+
+####################################################################
+#            FUNCIONES DE DETECCIÓN DE CONSULTAS LCL
+####################################################################
+
+def detect_lcl_query_type(query: str) -> str:
+    """Detecta el tipo específico de consulta LCL"""
     query_lower = query.lower()
     
-    # Análisis de documentos fuente si están disponibles
-    doc_types = set()
-    if source_docs:
-        for doc in source_docs:
-            content_type = doc.metadata.get('content_type', '')
-            if content_type:
-                doc_types.add(content_type)
+    # Consulta por ruta específica (origen -> destino)
+    if any(pattern in query_lower for pattern in ['desde', 'de', 'from']) and \
+       any(pattern in query_lower for pattern in ['hacia', 'hasta', 'a', 'to']):
+        return 'route_specific'
     
-    # Prioridad 1: Demurrage/Detention
-    if any(term in query_lower for term in ['demurrage', 'detention', 'almacenaje', 'sobrestadia']):
-        return 'demurrage_detention'
+    # Consulta por región
+    if any(region in query_lower for region in ['europa', 'asia', 'america', 'norteamerica']):
+        return 'region_query'
     
-    # Prioridad 2: Exportación (desde Chile)
-    if any(term in query_lower for term in ['exportar', 'desde san antonio', 'desde chile', 'desde valparaiso']):
-        return 'export_rates'
+    # Consulta comparativa
+    if any(term in query_lower for term in ['opciones', 'alternativas', 'comparar', 'todas']):
+        return 'comparative'
     
-    # Prioridad 3: FCL Importación (hacia Chile)
-    if any(term in query_lower for term in ['importar', 'hacia chile', 'desde china', 'desde shanghai', 'desde ningbo']):
-        return 'fcl_import'
+    # Consulta por país específico
+    for country in COUNTRY_ALIASES.keys():
+        if country in query_lower:
+            return 'country_specific'
     
-    # Prioridad 4: Comparativo general
-    if any(term in query_lower for term in ['comparar', 'opciones', 'alternativas', 'todas']):
-        return 'comparative_analysis'
+    return 'general'
+
+def extract_ports_from_query(query: str) -> dict:
+    """Extrae puertos origen y destino de la consulta"""
+    query_lower = query.lower()
     
-    # Análisis por documentos fuente
-    if 'demurrage_detention' in doc_types:
-        return 'demurrage_detention'
-    elif 'quotation' in doc_types and any('export' in str(doc.metadata) for doc in source_docs):
-        return 'export_rates'
-    elif 'fcl_rate' in doc_types:
-        return 'fcl_import'
+    # Patrones para detectar origen y destino
+    patterns = [
+        r'desde\s+([^a]+?)\s+(?:hacia|hasta|a)\s+([^?]+)',
+        r'de\s+([^a]+?)\s+a\s+([^?]+)',
+        r'from\s+([^to]+?)\s+to\s+([^?]+)',
+    ]
     
-    # Default: FCL Import
-    return 'fcl_import'
+    import re
+    for pattern in patterns:
+        match = re.search(pattern, query_lower)
+        if match:
+            origin_raw = match.group(1).strip()
+            destination_raw = match.group(2).strip()
+            
+            # Normalizar puertos
+            origin_normalized = normalize_port_name(origin_raw)
+            destination_normalized = normalize_port_name(destination_raw)
+            
+            return {
+                'origin_raw': origin_raw,
+                'destination_raw': destination_raw,
+                'origin_normalized': origin_normalized,
+                'destination_normalized': destination_normalized,
+                'has_route': True
+            }
+    
+    return {'has_route': False}
+
+def normalize_port_name(port_text: str) -> str:
+    """Normaliza nombres de puertos"""
+    if not port_text:
+        return ""
+    
+    port_lower = port_text.lower().strip()
+    
+    # Buscar coincidencia directa
+    for canonical, aliases in PORT_ALIASES.items():
+        if port_lower in aliases or any(alias in port_lower for alias in aliases):
+            return canonical
+    
+    return port_lower
 
 ####################################################################
-#            TEMPLATES ESPECIALIZADOS POR TIPO v2.2
+#            TEMPLATE ESPECIALIZADO PARA LCL
 ####################################################################
 
-def get_fcl_import_template():
-    """Template para cotizaciones FCL de importación"""
-    return """Eres un experto consultor en importaciones marítimas FCL de SEEMANN GROUP con validación POL/POD.
+def get_lcl_response_template():
+    """Template especializado para respuestas LCL marítimas"""
+    return """Eres un especialista en tarifas LCL (Less than Container Load) marítimas de SEEMANN GROUP.
 
-INSTRUCCIONES PARA COTIZACIONES FCL IMPORTACIÓN:
+CONTEXTO IMPORTANTE DEL NEGOCIO LCL:
+- TODOS los registros del tarifario son para importación HACIA CHILE
+- El destino implícito SIEMPRE es Chile (puertos San Antonio o Valparaíso)
+- Los usuarios consultan rutas como "desde Shanghai a Chile" o simplemente "desde Shanghai"
+- NO existe columna POD porque el destino siempre es Chile
 
-1. VALIDACIÓN OBLIGATORIA DE RUTAS:
-   - SOLO usa documentos donde POL (Puerto Origen) y POD (Puerto Destino) coincidan con la consulta
-   - Verifica ORIGEN_NORMALIZADO y DESTINO_NORMALIZADO en metadata
-   - Rechaza documentos con rutas incorrectas
+INSTRUCCIONES PARA CONSULTAS LCL:
 
-2. EXTRACCIÓN DE DATOS FCL:
-   - Tarifas: USD para 20' y 40'/40HC
-   - Transit Time (TT): días de navegación
-   - Free Days: días libres en destino
-   - Validez: fecha de expiración
-   - Carrier: naviera normalizada
+1. ANÁLISIS DE LA CONSULTA:
+   - Identifica puerto origen exacto
+   - DESTINO SIEMPRE ES CHILE (San Antonio/Valparaíso)
+   - Busca en las regiones correctas (AMERICA, EUROPA, NORTEAMERICA, ASIA)
+   - Valida que la ruta origen → Chile existe en nuestro tarifario
 
-3. FORMATO DE RESPUESTA FCL:
+2. INFORMACIÓN OBLIGATORIA A MOSTRAR:
+   - PUERTO CARGA (origen exacto)
+   - PAÍS de origen
+   - TON/M3 USD (tarifa por tonelada o metro cúbico)
+   - MÍNIMO (tarifa mínima aplicable)
+   - T/T APROX (tiempo de tránsito aproximado)
+   - FREC (frecuencia del servicio)
+   - SERVICIO (tipo: DIRECTO o VÍA otro puerto)
+   - AGENTE (agente local)
+   - OTROS (costos adicionales como DDT, VGM, etc.)
+   - OBSERVACIONES (condiciones especiales)
 
-**🚢 COTIZACIONES FCL - RUTA VALIDADA: [POL] → [POD]**
+3. FORMATO DE RESPUESTA OBLIGATORIO:
 
-| Naviera | 20' (USD) | 40' (USD) | TT (días) | Free Days | Validez | Fuente |
-|---------|-----------|-----------|-----------|-----------|---------|---------|
-[Tabla con datos validados]
+**🚢 TARIFAS LCL - RUTA: [PUERTO_ORIGEN] → CHILE**
 
-📊 **ANÁLISIS DE IMPORTACIÓN:**
-- **Ruta Consultada:** [POL] → [POD]
-- **Opciones Disponibles:** [X] navieras validadas
-- **Más Económica 40':** [NAVIERA] - USD [PRECIO]
-- **Mejor Tiempo de Tránsito:** [NAVIERA] - [DÍAS] días
-- **Mejores Free Days:** [NAVIERA] - [DÍAS] días
+📋 **INFORMACIÓN DETALLADA:**
+- **Puerto de Origen:** [PUERTO_EXACTO]
+- **País Origen:** [PAÍS]
+- **Destino:** Chile (San Antonio/Valparaíso)
+- **Tarifa:** [TON/M3] USD por tonelada/m³
+- **Mínimo:** [MÍNIMO] USD
+- **Tiempo Tránsito:** [T/T] días
+- **Frecuencia:** [FREC]
+- **Tipo Servicio:** [DIRECTO/VÍA X]
+- **Agente Local:** [AGENTE]
 
-🏆 **RECOMENDACIÓN FCL:**
-Para la ruta [POL] → [POD], recomiendo [NAVIERA] considerando [CRITERIOS].
+💰 **COSTOS ADICIONALES:**
+[Detallar OTROS costos como DDT USD 50.00, VGM USD 7.50, etc.]
 
-CONTEXTO: {chat_history}
-DOCUMENTOS: {context}
-CONSULTA: {question}
+⚠️ **OBSERVACIONES IMPORTANTES:**
+[Incluir todas las observaciones especiales, restricciones, validez de tarifas, etc.]
 
-RESPUESTA FCL VALIDADA:"""
+4. PARA CONSULTAS COMO "desde Shanghai" o "tarifa Shanghai":
+   - Entender automáticamente que el destino es Chile
+   - Mostrar información completa de la ruta Shanghai → Chile
+   - Aclarar que todas las tarifas son para importación hacia Chile
 
-def get_export_rates_template():
-    """Template para cotizaciones de exportación"""
-    return """Eres un experto consultor en exportaciones marítimas de SEEMANN GROUP desde Chile.
+5. PARA CONSULTAS COMPARATIVAS:
+   - Mostrar TODAS las opciones desde la región consultada hacia Chile
+   - Ordenar por precio o tiempo según consulta
+   - Incluir análisis de mejores opciones hacia Chile
 
-INSTRUCCIONES PARA COTIZACIONES DE EXPORTACIÓN:
+6. SI NO EXISTE LA RUTA HACIA CHILE:
+   - Informar claramente que no está disponible
+   - Sugerir puertos alternativos en la misma región
+   - Mostrar rutas más cercanas disponibles hacia Chile
 
-1. VALIDACIÓN DE RUTAS DE EXPORTACIÓN:
-   - POL debe ser puerto chileno (San Antonio, Valparaíso)
-   - POD debe coincidir con destino consultado
-   - Verificar que sea tráfico de exportación (outbound)
+CONTEXTO CONVERSACIÓN: {chat_history}
+DOCUMENTOS TARIFARIO: {context}
+CONSULTA CLIENTE: {question}
 
-2. DATOS ESPECÍFICOS DE EXPORTACIÓN:
-   - Freight Rate base
-   - Surcharges y fees aplicables
-   - Términos de pago (TBD, Prepaid, Collect)
-   - Documentación requerida
-   - Restricciones de carga
-
-3. FORMATO DE RESPUESTA EXPORTACIÓN:
-
-**🚢 EXPORTACIÓN DESDE CHILE - RUTA: [POL] → [POD]**
-
-| Servicio | 20' (USD) | 40' (USD) | Surcharges | Payment | Validez |
-|----------|-----------|-----------|------------|---------|---------|
-[Datos de exportación]
-
-📋 **COSTOS ADICIONALES:**
-- DOC Fee: USD [X] (per B/L)
-- Gate Out Charge: USD [X]
-- Terminal Handling: USD [X]
-- Other Fees: [Detalles]
-
-⚡ **CONDICIONES DE EXPORTACIÓN:**
-- Traffic Term: [CY-CY / Door-Door]
-- Commodity: [Tipo de carga aceptada]
-- Booking Conditions: [Restricciones]
-
-🎯 **RECOMENDACIÓN EXPORTACIÓN:**
-Para exportar desde [POL] a [POD], considerar [ANÁLISIS].
-
-CONTEXTO: {chat_history}
-DOCUMENTOS: {context}
-CONSULTA: {question}
-
-RESPUESTA EXPORTACIÓN:"""
-
-def get_demurrage_detention_template():
-    """Template para consultas de demurrage y detention"""
-    return """Eres un experto consultor en demurrage y detention de SEEMANN GROUP.
-
-INSTRUCCIONES PARA DEMURRAGE & DETENTION:
-
-1. IDENTIFICACIÓN DE TARIFAS D&D:
-   - Import vs Export demurrage/detention
-   - Tipos de contenedor (GP/HQ, OT/FL/PL, RF/RQ)
-   - Rangos de días y tarifas escalonadas
-   - País/puerto específico
-
-2. ANÁLISIS DE POLÍTICAS D&D:
-   - Free days por tipo de contenedor
-   - Tarifas progresivas por rangos de días
-   - Diferencias Import vs Export
-   - Condiciones especiales
-
-3. FORMATO DE RESPUESTA D&D:
-
-**⏰ DEMURRAGE & DETENTION - [CARRIER] - [PAÍS/PUERTO]**
-
-**📥 IMPORT D&D:**
-| Tipo Container | Días 1-[X] | Días [X]-[Y] | Días [Y]+ | Observaciones |
-|---------------|------------|--------------|-----------|---------------|
-[Tarifas import]
-
-**📤 EXPORT D&D:**
-| Tipo Container | Días 1-[X] | Días [X]-[Y] | Días [Y]+ | Observaciones |
-|---------------|------------|--------------|-----------|---------------|
-[Tarifas export]
-
-⚠️ **CONDICIONES IMPORTANTES:**
-- Cálculo: [Calendar days / Business days]
-- Free Days: [Detalles por tipo]
-- Cargos Adicionales: [Storage, reefer, etc.]
-- Fecha Efectiva: [Vigencia]
-
-💡 **RECOMENDACIÓN D&D:**
-Para minimizar costos de [demurrage/detention], [CONSEJOS].
-
-CONTEXTO: {chat_history}
-DOCUMENTOS: {context}
-CONSULTA: {question}
-
-RESPUESTA D&D:"""
-
-def get_comparative_analysis_template():
-    """Template para análisis comparativos"""
-    return """Eres un experto analista de logística marítima de SEEMANN GROUP para comparaciones exhaustivas.
-
-INSTRUCCIONES PARA ANÁLISIS COMPARATIVO:
-
-1. RECOPILACIÓN EXHAUSTIVA:
-   - Todas las navieras disponibles para la ruta/servicio
-   - Todos los puertos de origen relevantes
-   - Diferentes tipos de servicios (FCL, Export, D&D)
-   - Validación estricta de rutas
-
-2. MATRIZ COMPARATIVA:
-   - Tarifas por naviera y tipo de contenedor
-   - Tiempos de tránsito
-   - Free days y condiciones
-   - Ventajas/desventajas por carrier
-
-3. FORMATO DE RESPUESTA COMPARATIVA:
-
-**📊 ANÁLISIS COMPARATIVO COMPLETO - [TIPO DE SERVICIO]**
-
-**🏆 RANKING POR PRECIO (40'):**
-1. [NAVIERA]: USD [PRECIO] - [CONDICIONES]
-2. [NAVIERA]: USD [PRECIO] - [CONDICIONES]
-3. [NAVIERA]: USD [PRECIO] - [CONDICIONES]
-
-**⚡ RANKING POR TIEMPO DE TRÁNSITO:**
-1. [NAVIERA]: [X] días - USD [PRECIO]
-2. [NAVIERA]: [X] días - USD [PRECIO]
-3. [NAVIERA]: [X] días - USD [PRECIO]
-
-**🎯 MATRIZ COMPARATIVA DETALLADA:**
-| Naviera | 20' | 40' | TT | Free Days | Validez | Score |
-|---------|-----|-----|----|-----------|---------| ------|
-[Tabla completa]
-
-**💎 RECOMENDACIONES POR PERFIL:**
-- **Más Económico:** [NAVIERA] - Ideal para carga no urgente
-- **Más Rápido:** [NAVIERA] - Para entregas críticas
-- **Mejor Balance:** [NAVIERA] - Óptimo costo-tiempo
-- **Mejores Condiciones:** [NAVIERA] - Free days generosos
-
-🔍 **ANÁLISIS ESTRATÉGICO:**
-[Análisis detallado considerando todos los factores]
-
-CONTEXTO: {chat_history}
-DOCUMENTOS: {context}
-CONSULTA: {question}
-
-RESPUESTA COMPARATIVA:"""
+RESPUESTA LCL ESPECIALIZADA (Destino siempre Chile):"""
 
 ####################################################################
-#            FUNCIÓN PRINCIPAL DE TEMPLATE DINÁMICO v2.2
+#            FUNCIÓN DE VALIDACIÓN DE DOCUMENTOS LCL
 ####################################################################
 
-def enhanced_seemann_response_template(query_type: str = "fcl_import"):
-    """Retorna el template apropiado según el tipo de consulta"""
+def validate_lcl_document_relevance(query: str, documents: list) -> list:
+    """Filtra documentos relevantes para consultas LCL específicas"""
     
-    templates = {
-        'fcl_import': get_fcl_import_template(),
-        'export_rates': get_export_rates_template(),
-        'demurrage_detention': get_demurrage_detention_template(),
-        'comparative_analysis': get_comparative_analysis_template()
-    }
+    route_info = extract_ports_from_query(query)
+    query_type = detect_lcl_query_type(query)
     
-    return templates.get(query_type, get_fcl_import_template())
-
-####################################################################
-#            FUNCIÓN DE VALIDACIÓN DE DOCUMENTOS v2.2
-####################################################################
-
-def validate_document_relevance(query: str, documents: list) -> list:
-    """Filtra documentos por relevancia según tipo de consulta"""
-    query_type = detect_query_type(query, documents)
-    filtered_docs = []
+    if not route_info.get('has_route'):
+        # Si no hay ruta específica, devolver todos los documentos
+        return documents
+    
+    origin = route_info.get('origin_normalized', '')
+    destination = route_info.get('destination_normalized', '')
+    
+    relevant_docs = []
     
     for doc in documents:
-        content_type = doc.metadata.get('content_type', '')
+        doc_content = doc.page_content.lower()
         
-        # Filtrado por tipo de consulta
-        if query_type == 'demurrage_detention':
-            if 'demurrage' in content_type or 'detention' in content_type:
-                filtered_docs.append(doc)
-        elif query_type == 'export_rates':
-            # Buscar documentos con rutas desde Chile
-            pol = doc.metadata.get('pol', '').lower()
-            if any(port in pol for port in ['san antonio', 'valparaiso', 'chile']):
-                filtered_docs.append(doc)
-        elif query_type == 'fcl_import':
-            if 'fcl_rate' in content_type or 'quotation' in content_type:
-                filtered_docs.append(doc)
-        else:
-            # Para análisis comparativo, incluir todos los relevantes
-            filtered_docs.append(doc)
+        # Buscar coincidencia de puertos en el contenido
+        origin_match = False
+        destination_match = False
+        
+        if origin:
+            # Buscar puerto origen en el contenido
+            if origin in doc_content or any(alias in doc_content for alias in PORT_ALIASES.get(origin, [])):
+                origin_match = True
+        
+        if destination:
+            # Para destino, buscar en contexto regional apropiado
+            if destination in doc_content or any(alias in doc_content for alias in PORT_ALIASES.get(destination, [])):
+                destination_match = True
+        
+        # Si encontramos coincidencias relevantes, incluir documento
+        if origin_match or destination_match or query_type == 'comparative':
+            relevant_docs.append(doc)
     
-    return filtered_docs if filtered_docs else documents  # Fallback a todos los docs
- 
-
-from langchain.prompts import PromptTemplate
-from langchain.memory import ConversationBufferMemory
+    return relevant_docs if relevant_docs else documents  # Fallback
