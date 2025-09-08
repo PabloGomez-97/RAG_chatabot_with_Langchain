@@ -41,69 +41,91 @@ st.markdown("*Consultor especializado en tarifas LCL (Less than Container Load) 
 ####################################################################
 
 def get_lcl_response(prompt):
-    """Función principal de respuesta LCL"""
+    """Función principal de respuesta LCL con soporte multi-empresa
+    
+    Explicación:
+    - Detecta si el usuario prefiere una empresa específica
+    - Filtra documentos por empresa si es necesario
+    - Usa template multi-empresa que adapta respuesta según empresas encontradas
+    """
     try:
-        with st.spinner("🔍 Analizando consulta LCL..."):
+        with st.spinner("🔍 Analizando consulta LCL multi-empresa..."):
             
-            # Detectar tipo de consulta LCL
-            query_type = detect_lcl_query_type(prompt)
-            route_info = extract_ports_from_query(prompt)
+            # PASO 1: Detectar preferencia de empresa del usuario
+            from config import detect_query_company_preference
+            company_preference = detect_query_company_preference(prompt)
             
-            # Búsqueda especializada LCL
+            # PASO 2: Buscar documentos relevantes
             if hasattr(st.session_state, 'vector_store'):
                 all_relevant_docs = multi_query_lcl_retriever(
                     st.session_state.vector_store, prompt
                 )
                 
-                # Filtrar documentos por relevancia LCL
+                # PASO 3: Filtrar por empresa si el usuario especificó una
+                if company_preference != 'ALL':
+                    filtered_by_company = []
+                    for doc in all_relevant_docs:
+                        if doc.metadata.get('company', '').upper() == company_preference.upper():
+                            filtered_by_company.append(doc)
+                    
+                    # Si encontramos documentos de la empresa específica, usarlos
+                    if filtered_by_company:
+                        all_relevant_docs = filtered_by_company
+                        st.info(f"🏢 Mostrando solo resultados de: {company_preference}")
+                
+                # PASO 4: Filtrar por relevancia LCL
+                from config import validate_lcl_document_relevance
                 filtered_docs = validate_lcl_document_relevance(prompt, all_relevant_docs)
                 
-                with st.expander("🧠 **Análisis de Consulta LCL**", expanded=False):
+                # PASO 5: Analizar empresas encontradas
+                companies_found = set()
+                for doc in filtered_docs:
+                    company = doc.metadata.get('company', 'UNKNOWN')
+                    companies_found.add(company)
+                
+                with st.expander("🧠 **Análisis Multi-Empresa**", expanded=False):
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.info(f"**Tipo de Consulta:** {query_type}")
-                        
-                        if route_info.get('has_route'):
-                            st.success(f"**Ruta Detectada:** {route_info.get('origin_raw', '')} → {route_info.get('destination_raw', '')}")
-                        else:
-                            st.warning("**Consulta General:** Sin ruta específica")
+                        st.info(f"**Empresas Detectadas:** {', '.join(companies_found)}")
+                        st.info(f"**Preferencia Usuario:** {company_preference}")
                     
                     with col2:
-                        st.write(f"**Documentos Encontrados:** {len(all_relevant_docs)}")
-                        st.write(f"**Documentos Relevantes:** {len(filtered_docs)}")
+                        st.write(f"**Documentos Totales:** {len(all_relevant_docs)}")
+                        st.write(f"**Documentos Filtrados:** {len(filtered_docs)}")
                         
-                        if len(filtered_docs) < len(all_relevant_docs):
-                            st.warning(f"Se filtraron {len(all_relevant_docs) - len(filtered_docs)} documentos irrelevantes")
+                        # Mostrar distribución por empresa
+                        for company in companies_found:
+                            count = sum(1 for doc in filtered_docs if doc.metadata.get('company') == company)
+                            st.write(f"  • {company}: {count} documentos")
             
-            # Ejecutar chain LCL
+            # PASO 6: Ejecutar chain con template multi-empresa
             response = st.session_state.chain.invoke({"question": prompt})
             answer = response["answer"]
             
-            # Validar respuesta LCL
+            # PASO 7: Validar respuesta
             validation = validate_lcl_response(
                 answer, prompt, response.get("source_documents", [])
             )
             
-            # Agregar al historial
+            # PASO 8: Agregar al historial y mostrar
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
-            # Mostrar conversación
             st.chat_message("user").write(prompt)
             
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Métricas LCL
-                display_lcl_metrics(validation, query_type, route_info)
+                # Métricas multi-empresa
+                display_multi_company_metrics(validation, companies_found, company_preference)
                 
-                # Análisis de fuentes LCL
-                with st.expander("📋 **Análisis de Fuentes LCL**"):
-                    analyze_and_display_lcl_sources(response.get("source_documents", []))
+                # Análisis de fuentes multi-empresa
+                with st.expander("📋 **Análisis de Fuentes Multi-Empresa**"):
+                    analyze_and_display_multi_company_sources(response.get("source_documents", []))
                 
     except Exception as e:
-        st.error(f"Error en sistema LCL: {str(e)}")
+        st.error(f"Error en sistema multi-empresa: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
 
@@ -185,13 +207,14 @@ def enhanced_sidebar_lcl():
     with st.sidebar:
         st.markdown("### 🚀 **Sistema LCL Marítimo**")
         st.success("""
-        ✅ Procesamiento Excel especializado LCL
-        ✅ Detección automática de rutas
-        ✅ Información completa de costos
+        ✅ Procesamiento Multi-Empresa (MSL + PLUSCARGO)
+        ✅ Detección automática de empresa por archivo
+        ✅ Comparación entre empresas disponibles
+        ✅ Estructura específica MSL vs PLUSCARGO
+        ✅ Información completa de costos por empresa
         ✅ Tiempos de tránsito y frecuencias
         ✅ Agentes locales por puerto
-        ✅ Costos adicionales detallados
-        ✅ Observaciones por ruta
+        ✅ Costos adicionales detallados por empresa
         """)
         
         st.markdown("---")
@@ -515,6 +538,82 @@ def test_lcl_system():
     
     st.success("✅ Test LCL completado")
 
+def display_multi_company_metrics(validation: dict, companies_found: set, company_preference: str):
+    """Muestra métricas específicas multi-empresa"""
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        completeness = validation.get('completeness', 0)
+        if completeness >= 0.8:
+            st.success(f"✅ **Completitud** ({completeness:.0%})")
+        elif completeness >= 0.5:
+            st.warning(f"⚠️ **Completitud** ({completeness:.0%})")
+        else:
+            st.error(f"❌ **Completitud** ({completeness:.0%})")
+    
+    with col2:
+        if len(companies_found) > 1:
+            st.success(f"🔄 **Multi-Empresa** ({len(companies_found)} empresas)")
+        elif len(companies_found) == 1:
+            company = list(companies_found)[0]
+            st.info(f"🏢 **{company}** (1 empresa)")
+        else:
+            st.warning("❓ **Sin Empresas** detectadas")
+    
+    with col3:
+        if company_preference == 'ALL':
+            st.info("🌐 **Consulta:** Todas las empresas")
+        else:
+            st.info(f"🎯 **Consulta:** Solo {company_preference}")
+    
+    # Mostrar advertencias específicas multi-empresa
+    if validation.get('warnings'):
+        with st.expander("⚠️ **Advertencias Multi-Empresa**"):
+            for warning in validation['warnings']:
+                st.write(f"• {warning}")
+
+def analyze_and_display_multi_company_sources(sources: list):
+    """Analiza y muestra fuentes por empresa"""
+    
+    if not sources:
+        st.error("No se encontraron fuentes")
+        return
+    
+    # Análisis por empresa
+    by_company = {}
+    by_route = {}
+    
+    for doc in sources:
+        company = doc.metadata.get('company', 'UNKNOWN')
+        by_company[company] = by_company.get(company, 0) + 1
+        
+        # Analizar rutas por empresa
+        puerto_origen = doc.metadata.get('puerto_origen', '')
+        puerto_destino = doc.metadata.get('puerto_destino', 'Chile')
+        
+        if company not in by_route:
+            by_route[company] = set()
+        
+        if puerto_origen:
+            by_route[company].add(f"{puerto_origen} → {puerto_destino}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**📊 Por Empresa:**")
+        for company, count in by_company.items():
+            icon = "🏢" if company in ['MSL', 'PLUSCARGO'] else "❓"
+            st.write(f"{icon} {company}: {count} documentos")
+    
+    with col2:
+        st.write("**🛣️ Rutas por Empresa:**")
+        for company, routes in by_route.items():
+            if routes:
+                st.write(f"**{company}:**")
+                for route in list(routes)[:3]:  # Primeras 3 rutas
+                    st.write(f"  • {route}")
+                    
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################

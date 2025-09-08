@@ -303,3 +303,240 @@ def validate_lcl_document_relevance(query: str, documents: list) -> list:
             relevant_docs.append(doc)
     
     return relevant_docs if relevant_docs else documents  # Fallback
+
+
+def detect_company_from_excel(file_path: str) -> dict:
+    """Detecta la empresa y estructura del archivo Excel
+    
+    Explicación:
+    - Lee solo las primeras 5 filas del Excel para identificar la empresa
+    - Busca en celda A1 el identificador (PLUSCARGO vs TRAFICO: X)
+    - Retorna configuración específica de cada empresa
+    """
+    
+    try:
+        import pandas as pd
+        
+        # Leer solo primeras filas para performance
+        df_first = pd.read_excel(file_path, nrows=5, header=None)
+        
+        # Verificar celda A1
+        cell_a1 = str(df_first.iloc[0, 0]).strip().upper() if not df_first.empty else ""
+        
+        # Detectar empresa por identificador A1
+        if cell_a1 == "PLUSCARGO":
+            return {
+                "company": "PLUSCARGO",
+                "structure_type": "pluscargo_lcl",
+                "header_row": 9,  # Fila 10 en Excel
+                "has_pod_column": True,
+                "identification_cell": "A1",
+                "identification_value": "PLUSCARGO"
+            }
+        elif "TRAFICO:" in cell_a1 or "TRÁFICO:" in cell_a1:
+            return {
+                "company": "MSL",
+                "structure_type": "msl_lcl", 
+                "header_row": 3,  # Varía entre 3-4 según hoja
+                "has_pod_column": False,
+                "identification_cell": "A1",
+                "identification_value": cell_a1
+            }
+        else:
+            # Si A1 no tiene identificador, buscar en otras celdas
+            for row in range(min(5, len(df_first))):
+                for col in range(min(3, len(df_first.columns))):
+                    cell_value = str(df_first.iloc[row, col]).strip().upper()
+                    
+                    if "PLUSCARGO" in cell_value:
+                        return {
+                            "company": "PLUSCARGO",
+                            "structure_type": "pluscargo_lcl",
+                            "header_row": 9,
+                            "has_pod_column": True,
+                            "identification_cell": f"{chr(65+col)}{row+1}",
+                            "identification_value": cell_value
+                        }
+                    elif "MSL" in cell_value or "SEEMANN" in cell_value:
+                        return {
+                            "company": "MSL", 
+                            "structure_type": "msl_lcl",
+                            "header_row": 3,
+                            "has_pod_column": False,
+                            "identification_cell": f"{chr(65+col)}{row+1}",
+                            "identification_value": cell_value
+                        }
+        
+        # Default si no detecta empresa específica
+        return {
+            "company": "UNKNOWN",
+            "structure_type": "generic",
+            "header_row": 0,
+            "has_pod_column": False,
+            "identification_cell": "A1",
+            "identification_value": cell_a1
+        }
+        
+    except Exception as e:
+        return {
+            "company": "ERROR",
+            "structure_type": "error",
+            "error": str(e)
+        }
+
+def get_company_column_mapping(company: str) -> dict:
+    """Retorna mapeo de columnas según la empresa detectada
+    
+    Explicación:
+    - Cada empresa tiene estructura de columnas diferente
+    - MSL: PUERTO CARGA, PAIS, TON/M3, etc.
+    - PLUSCARGO: País, POL, POD, CBM, etc.
+    - Retorna diccionario con mapeo flexible para encontrar columnas
+    """
+    
+    if company == "MSL":
+        return {
+            "expected_columns": [
+                "PUERTO CARGA", "PAIS", "TON / M3 usd", "MINIMO", 
+                "T / T APROX.", "FREC.", "OTROS", "SERVICIO", "AGENTE", "OBSERVACIONES"
+            ],
+            "column_mapping": {
+                "puerto_origen": ["PUERTO CARGA", "PUERTO", "ORIGEN"],
+                "pais": ["PAIS", "PAÍS", "COUNTRY"],
+                "tarifa": ["TON / M3", "TARIFA", "USD"],
+                "minimo": ["MINIMO", "MÍNIMO", "MIN"],
+                "transito": ["T / T APROX", "TRANSITO", "TT", "APROX"],
+                "frecuencia": ["FREC", "FRECUENCIA", "FREQUENCY"],
+                "otros": ["OTROS", "OTHER", "ADICIONAL"],
+                "servicio": ["SERVICIO", "SERVICE"],
+                "agente": ["AGENTE", "AGENT"],
+                "observaciones": ["OBSERVACIONES", "OBS", "REMARKS"]
+            }
+        }
+    
+    elif company == "PLUSCARGO":
+        return {
+            "expected_columns": [
+                "País", "POL", "POD", "De 0 a 15.00 cbm", "Min", 
+                "Frecuencia", "Servicio", "T/T total aprox", "Modo", "Agente"
+            ],
+            "column_mapping": {
+                "pais": ["PAÍS", "PAIS", "COUNTRY"],
+                "puerto_origen": ["POL", "PUERTO ORIGEN", "ORIGIN"],
+                "puerto_destino": ["POD", "PUERTO DESTINO", "DESTINATION"],
+                "tarifa": ["CBM", "W/M", "TARIFA", "USD"],
+                "minimo": ["MIN", "MINIMO", "MÍNIMO"],
+                "frecuencia": ["FRECUENCIA", "FREQUENCY", "FREC"],
+                "servicio": ["SERVICIO", "SERVICE"],
+                "transito": ["T/T", "TRANSITO", "APROX"],
+                "modo": ["MODO", "MODE"],
+                "agente": ["AGENTE", "AGENT"],
+                "bl_fee": ["BL FEE", "BLFEE", "FEE"]
+            }
+        }
+    
+    else:
+        # Mapeo genérico para empresas no reconocidas
+        return {
+            "expected_columns": [],
+            "column_mapping": {
+                "puerto_origen": ["POL", "PUERTO", "ORIGEN", "ORIGIN"],
+                "puerto_destino": ["POD", "DESTINO", "DESTINATION"], 
+                "pais": ["PAIS", "PAÍS", "COUNTRY"],
+                "tarifa": ["TARIFA", "USD", "PRECIO", "RATE"],
+                "frecuencia": ["FRECUENCIA", "FREC", "FREQUENCY"],
+                "servicio": ["SERVICIO", "SERVICE"]
+            }
+        }
+
+def detect_query_company_preference(query: str) -> str:
+    """Detecta si el usuario prefiere una empresa específica en su consulta
+    
+    Explicación:
+    - Analiza la consulta del usuario
+    - Si menciona "MSL" o "Seemann" -> filtra solo MSL
+    - Si menciona "PLUSCARGO" -> filtra solo PLUSCARGO  
+    - Si no especifica -> muestra todas las empresas
+    """
+    query_lower = query.lower()
+    
+    if any(term in query_lower for term in ['msl', 'seemann']):
+        return 'MSL'
+    elif any(term in query_lower for term in ['pluscargo', 'plus cargo']):
+        return 'PLUSCARGO'
+    else:
+        return 'ALL'  # Mostrar todas las empresas
+
+def get_multi_company_lcl_template():
+    """Template que maneja múltiples empresas LCL
+    
+    Explicación:
+    - Reemplaza el template original get_lcl_response_template()
+    - Entiende diferencias entre MSL y PLUSCARGO
+    - Genera respuestas adaptadas según empresa(s) detectada(s)
+    """
+    return """Eres un especialista en tarifas LCL (Less than Container Load) marítimas que maneja múltiples empresas.
+
+EMPRESAS EN EL SISTEMA:
+- MSL (Seemann Group): Destino implícito Chile, sin columna POD
+- PLUSCARGO: Destino explícito (San Antonio/Valparaíso), con columna POD
+
+CONTEXTO IMPORTANTE DEL NEGOCIO LCL:
+- MSL: TODOS los registros son para importación HACIA CHILE (destino implícito)
+- PLUSCARGO: Tienen columna POD explícita con puerto destino específico
+- Adapta respuesta según empresa(s) detectada(s) en los documentos
+
+INSTRUCCIONES MULTI-EMPRESA:
+
+1. IDENTIFICACIÓN AUTOMÁTICA:
+   - El sistema detecta automáticamente la empresa
+   - Adapta respuesta según empresa detectada en documentos
+
+2. FORMATO DE RESPUESTA SEGÚN EMPRESA DETECTADA:
+
+Si solo hay documentos MSL:
+**🚢 TARIFAS LCL - MSL (SEEMANN GROUP)**
+**Ruta: [PUERTO_ORIGEN] → Chile (San Antonio/Valparaíso)**
+- **Tarifa TON/M³:** [TARIFA] USD
+- **Mínimo:** [MINIMO] USD  
+- **Tiempo Tránsito:** [TT] días
+- **Frecuencia:** [FREC]
+- **Servicio:** [DIRECTO/VÍA]
+- **Agente:** [AGENTE]
+- **Costos Adicionales:** [DDT, VGM, etc.]
+- **Observaciones:** [OBS]
+
+Si solo hay documentos PLUSCARGO:
+**🚢 TARIFAS LCL - PLUSCARGO**
+**Ruta: [POL] → [POD]**
+- **Tarifa CBM/W/M:** [TARIFA] USD
+- **Mínimo:** [MIN] USD
+- **BL Fee:** [FEE] USD (si aplica)
+- **Tiempo Tránsito:** [TT] días
+- **Frecuencia:** [FREC]
+- **Servicio:** [TIPO]
+- **Agente:** [AGENTE]
+
+Si hay documentos de AMBAS empresas:
+**🔄 COMPARACIÓN MULTI-EMPRESA DISPONIBLE**
+
+**🏢 MSL (SEEMANN GROUP):**
+[Información MSL como arriba]
+
+**🏢 PLUSCARGO:**
+[Información PLUSCARGO como arriba]
+
+**💡 COMPARACIÓN:**
+- MSL: Tarifa TON/M³ + costos adicionales
+- PLUSCARGO: Tarifa CBM/W/M + BL Fee
+- [Análisis de cuál conviene más]
+
+3. MANEJO DE DESTINOS POR EMPRESA:
+   - MSL: Siempre aclarar "destino Chile (implícito)"
+   - PLUSCARGO: Mostrar POD específico del tarifario
+
+CONTEXTO CONVERSACIÓN: {chat_history}
+DOCUMENTOS MULTI-EMPRESA: {context}
+CONSULTA CLIENTE: {question}
+
+RESPUESTA ESPECIALIZADA MULTI-EMPRESA:"""
