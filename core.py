@@ -311,6 +311,8 @@ def load_lcl_excel_documents() -> List[Document]:
                 file_docs = process_msl_excel(str(excel_file), company_info)
             elif company == "PLUSCARGO":
                 file_docs = process_pluscargo_excel(str(excel_file), company_info)
+            elif company == "ECU":
+                file_docs = process_ecu_excel(str(excel_file), company_info)
             else:
                 print(f"[DEBUG MULTI] Empresa {company} no reconocida, usando procesador genérico")
                 file_docs = process_generic_excel(str(excel_file), company_info)
@@ -829,6 +831,161 @@ lcl pluscargo {pol_normalizado} {pais.lower()} {pod.lower()}
     }
     
     return Document(page_content=content, metadata=metadata)
+
+def process_ecu_excel(file_path: str, company_info: dict) -> List[Document]:
+    """Procesa Excel con estructura ECU"""
+    documents = []
+    
+    try:
+        xl_file = pd.ExcelFile(file_path)
+        
+        for sheet_name in xl_file.sheet_names:
+            print(f"[DEBUG ECU] Procesando hoja: {sheet_name}")
+            
+            df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+            
+            # ECU: siempre fila 2 para encabezados
+            header_row = 1  # Fila 2 en Excel
+            
+            # Procesar con estructura ECU
+            sheet_docs = process_ecu_sheet(df, sheet_name, header_row, file_path)
+            documents.extend(sheet_docs)
+            
+    except Exception as e:
+        print(f"[DEBUG ECU] Error: {e}")
+    
+    return documents
+
+def process_ecu_sheet(df: pd.DataFrame, sheet_name: str, header_row: int, file_path: str) -> List[Document]:
+    """Procesa hoja con estructura específica ECU"""
+    documents = []
+    
+    # Importar mapeo ECU
+    from config import get_company_column_mapping
+    ecu_config = get_company_column_mapping("ECU")
+    
+    # Extraer encabezados
+    headers = []
+    for col in range(len(df.columns)):
+        header_val = safe_get_cell(df, header_row, col)
+        headers.append(header_val)
+    
+    print(f"[DEBUG ECU] Encabezados {sheet_name}: {headers}")
+    
+    # Mapear columnas ECU
+    column_mapping = map_columns_flexible(headers, ecu_config["column_mapping"])
+    print(f"[DEBUG ECU] Mapeo: {column_mapping}")
+    
+    # Procesar filas de datos ECU
+    for row_idx in range(header_row + 1, len(df)):
+        try:
+            doc = create_ecu_document(df, row_idx, column_mapping, sheet_name, file_path, len(documents))
+            if doc:
+                documents.append(doc)
+        except Exception as e:
+            continue
+    
+    return documents
+
+def create_ecu_document(df: pd.DataFrame, row_idx: int, mapping: dict,
+                       sheet_name: str, file_path: str, doc_count: int) -> Document:
+    """Crea documento específico para ECU"""
+    
+    # Extraer datos con mapeo ECU
+    region = safe_get_cell(df, row_idx, mapping.get('region', 0))
+    pais = safe_get_cell(df, row_idx, mapping.get('pais', 1))
+    first_leg_pol = safe_get_cell(df, row_idx, mapping.get('first_leg_pol', 2))
+    pol = safe_get_cell(df, row_idx, mapping.get('puerto_origen', 3))
+    ruta = safe_get_cell(df, row_idx, mapping.get('ruta', 4))
+    pod = safe_get_cell(df, row_idx, mapping.get('puerto_destino', 5))
+    servicio = safe_get_cell(df, row_idx, mapping.get('servicio', 6))
+    moneda = safe_get_cell(df, row_idx, mapping.get('moneda', 7))
+    tarifa = safe_get_cell(df, row_idx, mapping.get('tarifa', 8))
+    bl_fee = safe_get_cell(df, row_idx, mapping.get('bl_fee', 9))
+    transito = safe_get_cell(df, row_idx, mapping.get('transito', 10))
+    validez = safe_get_cell(df, row_idx, mapping.get('validez', 11))
+    
+    # Validación ECU
+    if not first_leg_pol and not pol and not pais:
+        return None
+    
+    # Normalizar datos ECU
+    puerto_origen = first_leg_pol or pol or f"Puerto en {pais}"
+    pais = pais or "País no especificado"
+    pod = pod or "SAI/VAP"
+    
+    # Normalizar tarifa con moneda específica ECU
+    tarifa_norm = normalize_ecu_currency(tarifa, moneda)
+    
+    from config import normalize_port_name
+    puerto_normalizado = normalize_port_name(puerto_origen)
+    
+    # Crear contenido ECU específico
+    content = f"""TARIFA LCL MARÍTIMA - ECU WORLDWIDE
+Empresa: ECU Worldwide
+Archivo: {Path(file_path).name}
+Hoja: {sheet_name}
+Registro #{doc_count + 1}
+
+=== INFORMACIÓN ECU ===
+EMPRESA: ECU Worldwide
+REGIÓN: {region}
+PAÍS ORIGEN: {pais}
+FIRST LEG POL: {first_leg_pol}
+PUERTO ORIGEN (POL): {pol}
+PUERTO_NORMALIZADO: {puerto_normalizado}
+RUTA: {ruta}
+PUERTO DESTINO (POD): {pod}
+
+=== TARIFAS ECU ===
+MONEDA: {moneda}
+TARIFA TON/M³ (01-15 CBM): {tarifa_norm}
+BL FEE: {normalize_ecu_currency(bl_fee, moneda) if bl_fee else 'No aplica'}
+TIEMPO TRÁNSITO: {extract_time_value(transito)}
+VALIDEZ: {validez or 'No especificado'}
+
+=== SERVICIO ECU ===
+TIPO SERVICIO: {servicio or 'ECU CONSOL'}
+RUTA DETALLADA: {first_leg_pol} → {ruta} → {pod}
+
+=== TÉRMINOS BÚSQUEDA ===
+lcl ecu worldwide {puerto_normalizado} {pais.lower()} {pod.lower()}
+"""
+    
+    metadata = {
+        "company": "ECU",
+        "source": file_path,
+        "sheet_name": sheet_name,
+        "region": region,
+        "puerto_origen": puerto_origen,
+        "puerto_destino": pod,
+        "pais_origen": pais,
+        "first_leg_pol": first_leg_pol,
+        "pol_code": pol,
+        "tarifa": tarifa_norm,
+        "moneda": moneda,
+        "content_type": "lcl_rate_ecu"
+    }
+    
+    return Document(page_content=content, metadata=metadata)
+
+def normalize_ecu_currency(value: str, currency: str) -> str:
+    """Normaliza moneda específicamente para ECU con moneda explícita"""
+    if not value or pd.isna(value) or str(value).strip() == '':
+        return "TBD"
+    
+    value_str = str(value).strip()
+    currency_str = str(currency).strip().upper() if currency else "USD"
+    
+    import re
+    number_pattern = r'([\d,]+\.?\d*)'
+    match = re.search(number_pattern, value_str)
+    
+    if match:
+        number = match.group(1)
+        return f"{currency_str} {number}"
+    
+    return f"{currency_str} {value_str}" if value_str else "TBD"
 
 # Funciones auxiliares (agregar también):
 

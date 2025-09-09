@@ -333,6 +333,15 @@ def detect_company_from_excel(file_path: str) -> dict:
                 "identification_cell": "A1",
                 "identification_value": "PLUSCARGO"
             }
+        elif cell_a1 == "ECU":
+            return {
+                "company": "ECU",
+                "structure_type": "ecu_lcl",
+                "header_row": 1,  # Fila 2 en Excel
+                "has_pod_column": True,
+                "identification_cell": "A1",
+                "identification_value": "ECU"
+            }
         elif "TRAFICO:" in cell_a1 or "TRÁFICO:" in cell_a1:
             return {
                 "company": "MSL",
@@ -435,6 +444,28 @@ def get_company_column_mapping(company: str) -> dict:
             }
         }
     
+    elif company == "ECU":
+        return {
+            "expected_columns": [
+                "REGION", "COUNTRY", "FIRST LEG POL", "POL", "RUTA", "POD", 
+                "SERVICIO", "CUR", "TON / M3", "BL", "TT estimado", "Validity ETD"
+            ],
+            "column_mapping": {
+                "region": ["REGION"],
+                "pais": ["COUNTRY", "PAIS", "PAÍS"],
+                "first_leg_pol": ["FIRST LEG POL"],
+                "puerto_origen": ["POL", "PUERTO ORIGEN"],
+                "ruta": ["RUTA", "ROUTE"],
+                "puerto_destino": ["POD", "PUERTO DESTINO"],
+                "servicio": ["SERVICIO", "SERVICE"],
+                "moneda": ["CUR", "CURRENCY"],
+                "tarifa": ["TON / M3", "TON/M3", "CBM"],
+                "bl_fee": ["BL", "BL FEE"],
+                "transito": ["TT", "FINAL TT", "TT ESTIMADO"],
+                "validez": ["VALIDITY", "ETD"]
+            }
+        }
+    
     else:
         # Mapeo genérico para empresas no reconocidas
         return {
@@ -480,6 +511,7 @@ def get_multi_company_lcl_template():
 EMPRESAS EN EL SISTEMA:
 - MSL (Seemann Group): Destino implícito Chile, sin columna POD
 - PLUSCARGO: Destino explícito (San Antonio/Valparaíso), con columna POD
+- ECU Worldwide: Estructura detallada con FIRST LEG POL y códigos específicos
 
 CONTEXTO IMPORTANTE DEL NEGOCIO LCL:
 - MSL: TODOS los registros son para importación HACIA CHILE (destino implícito)
@@ -516,6 +548,16 @@ Si solo hay documentos PLUSCARGO:
 - **Frecuencia:** [FREC]
 - **Servicio:** [TIPO]
 - **Agente:** [AGENTE]
+
+Si hay documentos ECU:
+**🚢 TARIFAS LCL - ECU WORLDWIDE**
+**Ruta: [FIRST_LEG_POL] → [RUTA] → [POD]**
+- **Región:** [REGION]
+- **Tarifa TON/M³:** [MONEDA] [TARIFA]
+- **BL Fee:** [BL_FEE] (si aplica)
+- **Tiempo Tránsito:** [TT] días
+- **Servicio:** [ECU CONSOL]
+- **Validez:** [VALIDITY_ETD]
 
 Si hay documentos de AMBAS empresas:
 **🔄 COMPARACIÓN MULTI-EMPRESA DISPONIBLE**
