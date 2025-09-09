@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ####################################################################
-#              CONFIG MSL - LCL MARITIME SYSTEM
+#              CONFIG MSL - NUEVO SISTEMA VERIFICACIÓN TOTAL
 ####################################################################
 
 # Get OpenAI API key from environment
@@ -19,27 +19,20 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ASSISTANT_LANGUAGE = "spanish"
 WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas LCL marítimas de MSL (Seemann Group).
 
-🚢 **SISTEMA MSL LCL:**
-- Consultas de tarifas LCL por puerto de origen hacia Chile
-- Información completa de costos por tonelada/m³
-- Detalles de tiempos de tránsito y frecuencias
-- Información de agentes locales y servicios
-- Costos adicionales y observaciones importantes
+🚢 **SISTEMA MSL LCL - VERIFICACIÓN TOTAL:**
+- Verificación completa de datos antes de responder
+- Solo información que realmente existe en el tarifario MSL
+- Consultas precisas de rutas LCL disponibles
+- Destino: Chile (San Antonio/Valparaíso)
 
 💡 **Ejemplos de consultas:**
-- "¿Cuánto cuesta envío LCL desde Shanghai a Chile?"
-- "Necesito tarifa desde Buenos Aires"
-- "¿Qué opciones tengo desde Europa?"
-- "Muéstrame todas las rutas desde Asia"
+- "¿Desde qué puertos de Asia puedo enviar a Chile?"
+- "¿Cuánto cuesta desde Santos a Chile?"
+- "¿Qué rutas directas hay desde Europa?"
 
-📋 **Información que puedo proporcionar:**
-- Costo por tonelada/metro cúbico
-- Tarifa mínima aplicable
-- Tiempo de tránsito aproximado
-- Frecuencia de servicios
-- Agentes locales
-- Costos adicionales (DDT, VGM, etc.)
-- Observaciones especiales por ruta
+⚠️ **IMPORTANTE:**
+Solo te daré información que esté realmente disponible en el tarifario MSL.
+Si una ruta no existe, te lo diré claramente.
 """
 
 # Available OpenAI models
@@ -58,228 +51,111 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 ####################################################################
-#            MAPEO DE PUERTOS MSL
-####################################################################
-
-PORT_ALIASES = {
-    # Puertos de América
-    'buenos aires': ['buenos aires', 'bue', 'argentina buenos aires', 'ba'],
-    'santos': ['santos', 'sao', 'brasil santos', 'santos brasil'],
-    'rio de janeiro': ['rio de janeiro', 'rio', 'brasil rio', 'gig'],
-    'callao': ['callao', 'cao', 'peru callao', 'lima'],
-    'guayaquil': ['guayaquil', 'gye', 'ecuador guayaquil'],
-    
-    # Puertos de Europa
-    'antwerp': ['antwerp', 'anr', 'belgium antwerp', 'amberes'],
-    'rotterdam': ['rotterdam', 'rtm', 'netherlands rotterdam', 'holanda'],
-    'hamburg': ['hamburg', 'ham', 'germany hamburg', 'alemania'],
-    'le havre': ['le havre', 'leh', 'france le havre', 'francia'],
-    'valencia': ['valencia', 'vlc', 'spain valencia', 'españa'],
-    
-    # Puertos de América del Norte
-    'miami': ['miami', 'mia', 'usa miami', 'florida'],
-    'new york': ['new york', 'nyc', 'usa new york', 'nueva york'],
-    'los angeles': ['los angeles', 'lax', 'usa los angeles'],
-    'chicago': ['chicago', 'chi', 'usa chicago'],
-    'houston': ['houston', 'hou', 'usa houston'],
-    
-    # Puertos de Asia
-    'shanghai': ['shanghai', 'sha', 'china shanghai'],
-    'ningbo': ['ningbo', 'ngb', 'china ningbo'],
-    'shenzhen': ['shenzhen', 'szn', 'china shenzhen'],
-    'qingdao': ['qingdao', 'tao', 'china qingdao'],
-    'busan': ['busan', 'pus', 'korea busan', 'corea'],
-    'sydney': ['sydney', 'syd', 'australia sydney'],
-    'melbourne': ['melbourne', 'mel', 'australia melbourne'],
-}
-
-COUNTRY_ALIASES = {
-    'argentina': ['argentina', 'arg'],
-    'brasil': ['brasil', 'brazil', 'bra'],
-    'peru': ['peru', 'per'],
-    'ecuador': ['ecuador', 'ecu'],
-    'chile': ['chile', 'chi'],
-    'belgium': ['belgium', 'bel', 'belgica'],
-    'netherlands': ['netherlands', 'net', 'holanda'],
-    'germany': ['germany', 'ger', 'alemania'],
-    'france': ['france', 'fra', 'francia'],
-    'spain': ['spain', 'esp', 'españa'],
-    'united states': ['united states', 'usa', 'estados unidos'],
-    'china': ['china', 'chn'],
-    'australia': ['australia', 'aus'],
-    'korea': ['korea', 'kor', 'corea'],
-}
-
-####################################################################
-#            FUNCIONES DE DETECCIÓN DE CONSULTAS MSL
-####################################################################
-
-def detect_msl_query_type(query: str) -> str:
-    """Detecta el tipo específico de consulta MSL"""
-    query_lower = query.lower()
-    
-    # Consulta por ruta específica (origen -> Chile)
-    if any(pattern in query_lower for pattern in ['desde', 'de', 'from']):
-        return 'route_specific'
-    
-    # Consulta por región
-    if any(region in query_lower for region in ['europa', 'asia', 'america', 'norteamerica']):
-        return 'region_query'
-    
-    # Consulta comparativa
-    if any(term in query_lower for term in ['opciones', 'alternativas', 'comparar', 'todas']):
-        return 'comparative'
-    
-    # Consulta por país específico
-    for country in COUNTRY_ALIASES.keys():
-        if country in query_lower:
-            return 'country_specific'
-    
-    return 'general'
-
-def extract_ports_from_query(query: str) -> dict:
-    """Extrae puertos origen de la consulta (destino siempre es Chile)"""
-    query_lower = query.lower()
-    
-    # Patrones para detectar origen
-    patterns = [
-        r'desde\s+([^a]+?)(?:\s+(?:hacia|hasta|a)\s+(?:chile|san antonio|valparaiso))?(?:\s|$|[?])',
-        r'de\s+([^a]+?)(?:\s+a\s+(?:chile|san antonio|valparaiso))?(?:\s|$|[?])',
-        r'from\s+([^to]+?)(?:\s+to\s+(?:chile|san antonio|valparaiso))?(?:\s|$|[?])',
-    ]
-    
-    import re
-    for pattern in patterns:
-        match = re.search(pattern, query_lower)
-        if match:
-            origin_raw = match.group(1).strip()
-            origin_normalized = normalize_port_name(origin_raw)
-            
-            return {
-                'origin_raw': origin_raw,
-                'origin_normalized': origin_normalized,
-                'destination': 'Chile',
-                'has_route': True
-            }
-    
-    return {'has_route': False, 'destination': 'Chile'}
-
-def normalize_port_name(port_text: str) -> str:
-    """Normaliza nombres de puertos"""
-    if not port_text:
-        return ""
-    
-    port_lower = port_text.lower().strip()
-    
-    # Buscar coincidencia directa
-    for canonical, aliases in PORT_ALIASES.items():
-        if port_lower in aliases or any(alias in port_lower for alias in aliases):
-            return canonical
-    
-    return port_lower
-
-####################################################################
-#            TEMPLATE MSL
+#            TEMPLATE MSL - VERIFICACIÓN ESTRICTA
 ####################################################################
 
 def get_msl_response_template():
-    """Template especializado para respuestas MSL"""
-    return """Eres un especialista en tarifas LCL (Less than Container Load) marítimas de MSL (Seemann Group).
+    """Template especializado para mostrar TODAS las opciones disponibles"""
+    return """Eres un especialista en tarifas LCL marítimas de MSL que DEBE mostrar TODAS las opciones disponibles.
 
-CONTEXTO IMPORTANTE MSL:
-- TODOS los registros del tarifario MSL son para importación HACIA CHILE
-- El destino implícito SIEMPRE es Chile (San Antonio/Valparaíso)
-- Los usuarios consultan rutas como "desde Shanghai" o "desde Shanghai a Chile"
-- MSL no tiene columna POD porque el destino siempre es Chile
+REGLAS FUNDAMENTALES:
+1. NUNCA inventes información que no esté en los documentos
+2. SIEMPRE muestra TODAS las opciones del mismo puerto si existen múltiples
+3. Agrupa las opciones por puerto pero muestra cada una por separado
+4. Si falta información, especifica qué está "No disponible"
 
-INSTRUCCIONES PARA CONSULTAS MSL:
+CONTEXTO MSL:
+- Todos los envíos son hacia Chile (San Antonio/Valparaíso)
+- Si hay múltiples servicios desde el mismo puerto, MOSTRAR TODOS
+- Cada opción puede tener diferentes precios, tiempos, servicios
 
-1. ANÁLISIS DE LA CONSULTA:
-   - Identifica puerto origen exacto
-   - DESTINO SIEMPRE ES CHILE (San Antonio/Valparaíso)
-   - Busca en las regiones correctas (AMERICA, EUROPA, NORTEAMERICA, ASIA)
-   - Valida que la ruta origen → Chile existe en el tarifario MSL
+FORMATO OBLIGATORIO PARA MÚLTIPLES OPCIONES:
 
-2. INFORMACIÓN OBLIGATORIA A MOSTRAR:
-   - PUERTO ORIGEN (exacto del tarifario)
-   - PAÍS de origen
-   - TON/M3 USD (tarifa por tonelada o metro cúbico)
-   - MÍNIMO (tarifa mínima aplicable)
-   - T/T APROX (tiempo de tránsito aproximado)
-   - FREC (frecuencia del servicio)
-   - SERVICIO (tipo: DIRECTO o VÍA otro puerto)
-   - AGENTE (agente local)
-   - OTROS (costos adicionales como DDT, VGM, etc.)
-   - OBSERVACIONES (condiciones especiales)
+**🚢 TARIFAS LCL MSL - TODAS LAS OPCIONES: [PUERTO] → CHILE**
 
-3. FORMATO DE RESPUESTA OBLIGATORIO:
-
-**🚢 TARIFAS LCL MSL - RUTA: [PUERTO_ORIGEN] → CHILE**
-
-📋 **INFORMACIÓN DETALLADA:**
+📋 **OPCIÓN 1:**
 - **Puerto de Origen:** [PUERTO_EXACTO]
-- **País Origen:** [PAÍS]
+- **País Origen:** [PAÍS_EXACTO]
 - **Destino:** Chile (San Antonio/Valparaíso)
-- **Tarifa:** [TON/M3] por tonelada/m³
-- **Mínimo:** [MÍNIMO]
-- **Tiempo Tránsito:** [T/T] días
-- **Frecuencia:** [FREC]
-- **Tipo Servicio:** [DIRECTO/VÍA X]
-- **Agente Local:** [AGENTE]
+- **TON / M3 Usd:** [TARIFA_1] (si está disponible)
+- **Mínimo:** [MÍNIMO_1] (si está disponible)
+- **Tiempo Tránsito:** [DÍAS_1] (si está disponible)
+- **Frecuencia:** [FRECUENCIA_1] (si está disponible)
+- **Tipo Servicio:** [SERVICIO_1] (si está disponible)
+- **Agente Local:** [AGENTE_1] (si está disponible)
 
-💰 **COSTOS ADICIONALES:**
-[Detallar OTROS costos como DDT USD 50.00, VGM USD 7.50, etc.]
+📋 **OPCIÓN 2:**
+- **Puerto de Origen:** [PUERTO_EXACTO]
+- **País Origen:** [PAÍS_EXACTO]
+- **Destino:** Chile (San Antonio/Valparaíso)
+- **TON / M3 Usd:** [TARIFA_2] (si está disponible)
+- **Mínimo:** [MÍNIMO_2] (si está disponible)
+- **Tiempo Tránsito:** [DÍAS_2] (si está disponible)
+- **Frecuencia:** [FRECUENCIA_2] (si está disponible)
+- **Tipo Servicio:** [SERVICIO_2] (si está disponible)
+- **Agente Local:** [AGENTE_2] (si está disponible)
+
+[Continuar con OPCIÓN 3, 4, etc. si hay más opciones]
+
+💡 **COMPARACIÓN DE OPCIONES:**
+- **Más económica:** [Opción X - precio]
+- **Más rápida:** [Opción Y - días]
+- **Servicio directo:** [Si hay opción directa]
+- **Recomendación:** [Análisis según necesidades típicas]
 
 ⚠️ **OBSERVACIONES IMPORTANTES:**
-[Incluir todas las observaciones especiales, restricciones, validez de tarifas, etc.]
+[Incluir todas las observaciones de todas las opciones]
 
-4. PARA CONSULTAS COMO "desde Shanghai" o "tarifa Shanghai":
-   - Entender automáticamente que el destino es Chile
-   - Mostrar información completa de la ruta Shanghai → Chile
-   - Aclarar que todas las tarifas MSL son para importación hacia Chile
+INSTRUCCIONES CRÍTICAS:
+- BUSCA EN TODOS LOS DOCUMENTOS opciones del mismo puerto
+- NO te limites al primer documento que encuentres
+- Si hay 2+ documentos del mismo puerto, mostrar TODOS
+- Cada fila del Excel = una opción diferente
+- NUNCA omitas opciones que existan en los documentos
 
-5. PARA CONSULTAS COMPARATIVAS:
-   - Mostrar TODAS las opciones MSL desde la región consultada hacia Chile
-   - Ordenar por precio o tiempo según consulta
-   - Incluir análisis de mejores opciones MSL hacia Chile
+CONTEXTO: {chat_history}
+DOCUMENTOS MSL (REVISAR TODOS): {context}
+CONSULTA: {question}
 
-6. SI NO EXISTE LA RUTA HACIA CHILE:
-   - Informar claramente que no está disponible en MSL
-   - Sugerir puertos alternativos MSL en la misma región
-   - Mostrar rutas MSL más cercanas disponibles hacia Chile
-
-CONTEXTO CONVERSACIÓN: {chat_history}
-DOCUMENTOS TARIFARIO MSL: {context}
-CONSULTA CLIENTE: {question}
-
-RESPUESTA MSL ESPECIALIZADA (Destino siempre Chile):"""
+RESPUESTA MOSTRANDO TODAS LAS OPCIONES:"""
 
 ####################################################################
-#            FUNCIONES DE VALIDACIÓN MSL
+#            FUNCIONES DE DETECCIÓN Y VERIFICACIÓN
 ####################################################################
 
-def validate_msl_document_relevance(query: str, documents: list) -> list:
-    """Filtra documentos relevantes para consultas MSL específicas"""
+def detect_msl_query_type(query: str) -> str:
+    """Detecta tipo de consulta para verificación"""
+    query_lower = query.lower()
     
-    route_info = extract_ports_from_query(query)
-    query_type = detect_msl_query_type(query)
+    if any(pattern in query_lower for pattern in ['desde', 'de', 'from']):
+        return 'route_verification'
+    elif any(region in query_lower for region in ['europa', 'asia', 'america', 'norteamerica']):
+        return 'region_verification'
+    elif any(term in query_lower for term in ['opciones', 'alternativas', 'disponible']):
+        return 'availability_check'
+    else:
+        return 'general_verification'
+
+def extract_port_for_verification(query: str) -> dict:
+    """Extrae puerto para verificar si existe"""
+    query_lower = query.lower()
     
-    if not route_info.get('has_route'):
-        # Si no hay ruta específica, devolver todos los documentos MSL
-        return documents
+    # Patrones más específicos para extracción
+    import re
     
-    origin = route_info.get('origin_normalized', '')
+    patterns = [
+        r'desde\s+([^a-z\s]{2,}(?:\s+[^a-z\s]{2,})*)',  # Desde PUERTO
+        r'de\s+([^a-z\s]{2,}(?:\s+[^a-z\s]{2,})*)',     # De PUERTO
+        r'tarifa\s+([^a-z\s]{2,}(?:\s+[^a-z\s]{2,})*)', # Tarifa PUERTO
+    ]
     
-    relevant_docs = []
+    for pattern in patterns:
+        match = re.search(pattern, query_lower, re.IGNORECASE)
+        if match:
+            port_raw = match.group(1).strip()
+            return {
+                'port_requested': port_raw,
+                'needs_verification': True
+            }
     
-    for doc in documents:
-        doc_content = doc.page_content.lower()
-        
-        # Buscar coincidencia de puerto origen en el contenido
-        if origin:
-            if origin in doc_content or any(alias in doc_content for alias in PORT_ALIASES.get(origin, [])):
-                relevant_docs.append(doc)
-        elif query_type == 'comparative':
-            relevant_docs.append(doc)
-    
-    return relevant_docs if relevant_docs else documents  # Fallback
+    return {'needs_verification': False}

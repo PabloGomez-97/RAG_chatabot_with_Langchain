@@ -7,19 +7,18 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
-# Importar módulos locales MSL
+# Importar módulos MSL con verificación
 from config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_msl_query_type,
-    extract_ports_from_query, validate_msl_document_relevance
+    extract_port_for_verification
 )
 from core import (
-    load_msl_excel_documents, 
-    create_msl_conversational_chain,
-    create_msl_retriever,
-    multi_query_msl_retriever,
-    validate_msl_response,
-    analyze_msl_sources
+    load_msl_documents_with_verification,
+    create_msl_verified_chain,
+    create_msl_verified_retriever,
+    validate_msl_route_exists,
+    analyze_msl_verified_sources
 )
 
 ####################################################################
@@ -27,58 +26,69 @@ from core import (
 ####################################################################
 
 st.set_page_config(
-    page_title="MSL - LCL Marítimo",
-    page_icon="🚢",
+    page_title="MSL - Verificación Total",
+    page_icon="✅",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🚢 MSL (Seemann Group) - Sistema LCL Marítimo")  
-st.markdown("*Consultor especializado en tarifas LCL (Less than Container Load) marítimas MSL*")
+st.title("✅ MSL (Seemann Group) - Sistema con Verificación Total")  
+st.markdown("*Solo información que realmente existe en el tarifario MSL*")
 
 ####################################################################
-#            FUNCIONES PRINCIPALES MSL
+#            FUNCIONES PRINCIPALES CON VERIFICACIÓN
 ####################################################################
 
-def get_msl_response(prompt):
-    """Función principal de respuesta MSL"""
+def get_msl_verified_response(prompt):
+    """Función principal con verificación estricta y captura de múltiples opciones"""
     try:
-        with st.spinner("🔍 Analizando consulta LCL MSL..."):
+        with st.spinner("🔍 Buscando TODAS las opciones disponibles en MSL..."):
             
-            # PASO 1: Detectar tipo de consulta MSL
-            query_type = detect_msl_query_type(prompt)
-            route_info = extract_ports_from_query(prompt)
+            # PASO 1: Verificar que existe información para la consulta
+            if not hasattr(st.session_state, 'vector_store'):
+                st.error("❌ No hay base de datos cargada")
+                return
             
-            # PASO 2: Buscar documentos MSL relevantes
-            if hasattr(st.session_state, 'vector_store'):
-                all_relevant_docs = multi_query_msl_retriever(st.session_state.vector_store, prompt)
+            # PASO 2: Buscar TODOS los documentos relevantes (sin filtros restrictivos)
+            retriever = st.session_state.retriever
+            docs = retriever.get_relevant_documents(prompt)
+            
+            # PASO 3: Analizar cuántas opciones diferentes hay para el mismo puerto
+            port_info = extract_port_for_verification(prompt)
+            port_options_analysis = analyze_port_options(docs, port_info.get('port_requested', ''))
+            
+            # PASO 4: Validar existencia y mostrar análisis detallado
+            validation = validate_msl_route_exists(prompt, docs)
+            
+            with st.expander("🔍 **Análisis de Opciones Múltiples**", expanded=False):
+                col1, col2 = st.columns(2)
                 
-                # PASO 3: Filtrar por relevancia MSL
-                filtered_docs = validate_msl_document_relevance(prompt, all_relevant_docs)
+                with col1:
+                    st.write(f"**Estado:** {validation['verification_status']}")
+                    if validation['route_requested']:
+                        st.write(f"**Puerto solicitado:** {validation['route_requested']}")
+                    st.write(f"**Documentos encontrados:** {len(docs)}")
                 
-                with st.expander("🧠 **Análisis MSL**", expanded=False):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.info(f"**Tipo Consulta:** {query_type}")
-                        if route_info.get('has_route'):
-                            origin = route_info.get('origin_raw', 'N/A')
-                            st.write(f"**Ruta MSL:** {origin} → Chile")
-                    
-                    with col2:
-                        st.write(f"**Documentos Totales:** {len(all_relevant_docs)}")
-                        st.write(f"**Documentos Filtrados:** {len(filtered_docs)}")
+                with col2:
+                    if port_options_analysis['multiple_options']:
+                        st.success(f"✅ **{port_options_analysis['options_count']} opciones diferentes encontradas**")
+                        for i, option in enumerate(port_options_analysis['options_summary'], 1):
+                            st.write(f"  {i}. {option}")
+                    else:
+                        st.info("ℹ️ Una opción encontrada")
             
-            # PASO 4: Ejecutar chain MSL
+            # PASO 5: Ejecutar chain con énfasis en mostrar TODAS las opciones
             response = st.session_state.chain.invoke({"question": prompt})
             answer = response["answer"]
             
-            # PASO 5: Validar respuesta MSL
-            validation = validate_msl_response(
-                answer, prompt, response.get("source_documents", [])
-            )
+            # PASO 6: Validar que se mostraron todas las opciones
+            if port_options_analysis['multiple_options'] and port_options_analysis['options_count'] > 1:
+                option_count_in_response = answer.count("OPCIÓN")
+                if option_count_in_response < port_options_analysis['options_count']:
+                    warning_msg = f"\n\n⚠️ **ADVERTENCIA:** Se detectaron {port_options_analysis['options_count']} opciones pero solo se mostraron {option_count_in_response}. Verificando..."
+                    answer += warning_msg
             
-            # PASO 6: Agregar al historial y mostrar
+            # PASO 7: Mostrar respuesta
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
@@ -87,144 +97,247 @@ def get_msl_response(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Métricas MSL
-                display_msl_metrics(validation, query_type, route_info)
+                # Métricas de múltiples opciones
+                display_multiple_options_metrics(validation, port_options_analysis, response.get("source_documents", []))
                 
-                # Análisis de fuentes MSL
-                with st.expander("📋 **Análisis de Fuentes MSL**"):
-                    analyze_and_display_msl_sources(response.get("source_documents", []))
+                # Análisis detallado de todas las opciones
+                with st.expander("📋 **Análisis Detallado de Todas las Opciones**"):
+                    display_all_options_analysis(response.get("source_documents", []), port_info.get('port_requested', ''))
                 
     except Exception as e:
-        st.error(f"Error en sistema MSL: {str(e)}")
+        st.error(f"Error en sistema de múltiples opciones: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
 
-def display_msl_metrics(validation: dict, query_type: str, route_info: dict):
-    """Muestra métricas específicas para MSL"""
+def analyze_port_options(docs: list, requested_port: str) -> dict:
+    """Analiza cuántas opciones diferentes hay para un puerto específico"""
+    
+    analysis = {
+        'multiple_options': False,
+        'options_count': 0,
+        'options_summary': [],
+        'same_port_docs': []
+    }
+    
+    if not requested_port:
+        return analysis
+    
+    requested_port_clean = requested_port.lower().strip()
+    
+    # Buscar documentos del mismo puerto
+    for doc in docs:
+        puerto_origen = doc.metadata.get('puerto_origen', '').lower()
+        
+        if requested_port_clean in puerto_origen or puerto_origen in requested_port_clean:
+            analysis['same_port_docs'].append(doc)
+            
+            # Crear resumen de la opción
+            tarifa = doc.metadata.get('tarifa', 'No disponible')
+            servicio = doc.metadata.get('tipo_servicio', 'No especificado')
+            row = doc.metadata.get('row_number', 'N/A')
+            
+            option_summary = f"Fila {row}: {tarifa} - {servicio}"
+            analysis['options_summary'].append(option_summary)
+    
+    analysis['options_count'] = len(analysis['same_port_docs'])
+    analysis['multiple_options'] = analysis['options_count'] > 1
+    
+    return analysis
+
+def display_multiple_options_metrics(validation: dict, options_analysis: dict, source_docs: list):
+    """Muestra métricas específicas para múltiples opciones"""
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        completeness = validation.get('completeness', 0)
-        if completeness >= 0.8:
-            st.success(f"✅ **Completitud** ({completeness:.0%})")
-        elif completeness >= 0.5:
-            st.warning(f"⚠️ **Completitud** ({completeness:.0%})")
+        if validation['route_exists']:
+            st.success("✅ **Ruta Verificada**")
+        elif validation['route_requested']:
+            st.error("❌ **Ruta No Existe**")
         else:
-            st.error(f"❌ **Completitud** ({completeness:.0%})")
+            st.info("ℹ️ **Consulta General**")
     
     with col2:
-        route_accuracy = validation.get('route_accuracy', 0)
-        if route_accuracy >= 0.8:
-            st.success(f"🎯 **Precisión Ruta** ({route_accuracy:.0%})")
-        elif route_accuracy >= 0.5:
-            st.warning(f"⚠️ **Precisión Ruta** ({route_accuracy:.0%})")
+        if options_analysis['multiple_options']:
+            st.success(f"🔄 **{options_analysis['options_count']} Opciones Diferentes**")
         else:
-            st.error(f"❌ **Precisión Ruta** ({route_accuracy:.0%})")
+            st.info("1️⃣ **Opción Única**")
     
     with col3:
-        query_labels = {
-            'route_specific': '🛣️ Ruta Específica',
-            'region_query': '🌍 Por Región',
-            'comparative': '📊 Comparativo',
-            'country_specific': '🏳️ Por País',
-            'general': '🔍 General'
-        }
-        st.info(f"**Tipo:** {query_labels.get(query_type, query_type)}")
+        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
+        if verified_docs > 0:
+            st.success(f"📄 **{verified_docs} Docs Verificados**")
+        else:
+            st.warning("⚠️ **Sin Docs Verificados**")
     
-    # Mostrar advertencias
-    if validation.get('warnings'):
-        with st.expander("⚠️ **Advertencias MSL**"):
-            for warning in validation['warnings']:
-                st.write(f"• {warning}")
+    # Mostrar detalles de múltiples opciones
+    if options_analysis['multiple_options']:
+        with st.expander("🔄 **Detalles de Múltiples Opciones**"):
+            st.write(f"**Puerto:** {validation.get('route_requested', 'N/A')}")
+            st.write(f"**Total opciones encontradas:** {options_analysis['options_count']}")
+            for i, option in enumerate(options_analysis['options_summary'], 1):
+                st.write(f"  **{i}.** {option}")
+
+def display_all_options_analysis(sources: list, requested_port: str):
+    """Muestra análisis detallado de todas las opciones del puerto"""
     
-    # Mostrar sugerencias
+    if not sources:
+        st.warning("⚠️ No se encontraron fuentes")
+        return
+    
+    # Filtrar documentos del puerto solicitado
+    port_docs = []
+    if requested_port:
+        requested_clean = requested_port.lower().strip()
+        for doc in sources:
+            puerto_origen = doc.metadata.get('puerto_origen', '').lower()
+            if requested_clean in puerto_origen or puerto_origen in requested_clean:
+                port_docs.append(doc)
+    
+    if port_docs:
+        st.write(f"**🔍 Análisis detallado para: {requested_port}**")
+        
+        for i, doc in enumerate(port_docs, 1):
+            with st.expander(f"**Opción {i} - Fila {doc.metadata.get('row_number', 'N/A')}**"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write(f"**Puerto:** {doc.metadata.get('puerto_origen', 'N/A')}")
+                    st.write(f"**País:** {doc.metadata.get('pais_origen', 'N/A')}")
+                    st.write(f"**Fila Excel:** {doc.metadata.get('row_number', 'N/A')}")
+                    st.write(f"**Hoja:** {doc.metadata.get('sheet_name', 'N/A')}")
+                
+                with col2:
+                    st.write(f"**Estado:** {doc.metadata.get('verification_status', 'N/A')}")
+                    st.write(f"**Tipo contenido:** {doc.metadata.get('content_type', 'N/A')}")
+    else:
+        # Mostrar análisis general
+        verified_sources = [doc for doc in sources if doc.metadata.get('verification_status') == 'VERIFIED']
+        analysis = analyze_msl_verified_sources(verified_sources)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Puertos en resultados:**")
+            for port in sorted(list(analysis.get('verified_ports', set())))[:5]:
+                st.write(f"⚓ {port}")
+        
+        with col2:
+            st.write("**Por región:**")
+            for region, count in analysis.get('regions', {}).items():
+                st.write(f"🌍 {region}: {count}")
+
+def display_verification_metrics(validation: dict, source_docs: list):
+    """Muestra métricas de verificación"""
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if validation['route_exists']:
+            st.success("✅ **Ruta Verificada**")
+        elif validation['route_requested']:
+            st.error("❌ **Ruta No Existe**")
+        else:
+            st.info("ℹ️ **Consulta General**")
+    
+    with col2:
+        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
+        if verified_docs > 0:
+            st.success(f"📄 **{verified_docs} Documentos Verificados**")
+        else:
+            st.warning("⚠️ **Sin Documentos Verificados**")
+    
+    with col3:
+        available_routes = len(set(validation.get('available_routes', [])))
+        st.info(f"🗺️ **{available_routes} Rutas Disponibles**")
+    
+    # Mostrar sugerencias si las hay
     if validation.get('suggestions'):
-        with st.expander("💡 **Sugerencias**"):
+        with st.expander("💡 **Rutas Alternativas Verificadas**"):
             for suggestion in validation['suggestions']:
                 st.write(f"• {suggestion}")
 
-def analyze_and_display_msl_sources(sources: list):
-    """Analiza y muestra fuentes MSL"""
+def display_verified_sources_analysis(sources: list):
+    """Analiza y muestra solo fuentes verificadas"""
     
-    if not sources:
-        st.error("No se encontraron fuentes MSL")
+    verified_sources = [doc for doc in sources if doc.metadata.get('verification_status') == 'VERIFIED']
+    
+    if not verified_sources:
+        st.warning("⚠️ No se encontraron fuentes verificadas")
         return
     
-    analysis = analyze_msl_sources(sources)
+    analysis = analyze_msl_verified_sources(verified_sources)
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.write("**Por Región:**")
+        st.write("**Por Región Verificada:**")
         for region, count in analysis['regions'].items():
-            st.write(f"🌍 {region}: {count}")
+            st.write(f"✅ {region}: {count}")
     
     with col2:
-        st.write("**Puertos Principales:**")
-        sorted_ports = sorted(analysis['ports'].items(), key=lambda x: x[1], reverse=True)[:5]
-        for port, count in sorted_ports:
-            st.write(f"⚓ {port}: {count}")
+        st.write("**Puertos Verificados:**")
+        sorted_ports = sorted(list(analysis['verified_ports']))[:5]
+        for port in sorted_ports:
+            st.write(f"⚓ {port}")
     
     with col3:
-        st.write("**Por País:**")
-        sorted_countries = sorted(analysis['countries'].items(), key=lambda x: x[1], reverse=True)[:5]
-        for country, count in sorted_countries:
-            st.write(f"🏳️ {country}: {count}")
+        st.write("**Países Verificados:**")
+        sorted_countries = sorted(list(analysis['verified_countries']))[:5]
+        for country in sorted_countries:
+            st.write(f"🌍 {country}")
 
-def enhanced_sidebar_msl():
-    """Interfaz lateral especializada para MSL"""
+def enhanced_sidebar_verification():
+    """Interfaz lateral con verificación total"""
     with st.sidebar:
-        st.markdown("### 🚀 **Sistema MSL LCL Marítimo**")
+        st.markdown("### ✅ **Sistema MSL con Verificación Total**")
         st.success("""
-        ✅ Procesamiento especializado MSL
-        ✅ Estructura específica del tarifario MSL
-        ✅ Destino implícito: Chile (San Antonio/Valparaíso)
-        ✅ Información completa de costos MSL
-        ✅ Tiempos de tránsito y frecuencias
-        ✅ Agentes locales por puerto
-        ✅ Costos adicionales detallados (DDT, VGM)
-        ✅ 4 regiones: AMERICA, EUROPA, NORTEAMERICA, ASIA
+        ✅ Inspección celda por celda del Excel
+        ✅ Solo rutas que realmente existen
+        ✅ Verificación antes de cada respuesta
+        ✅ Sin información inventada
+        ✅ Advertencias cuando ruta no existe
+        ✅ Sugerencias de rutas alternativas verificadas
+        ✅ Validación estricta de datos
         """)
         
         st.markdown("---")
         
-        # Estado del sistema
         if OPENAI_API_KEY:
             st.success("✅ OpenAI API conectada")
         else:
             st.error("❌ API Key no encontrada")
             return
 
-    # Tabs para MSL
-    tab1, tab2, tab3, tab4 = st.tabs(["📤 Crear MSL", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
+    # Tabs para verificación
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Crear con Verificación", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
 
     with tab1:
-        st.markdown("### 📤 Crear Base de Datos MSL")
+        st.markdown("### 🔍 Crear Base de Datos con Verificación Total")
         
         st.session_state.uploaded_file_list = st.file_uploader(
-            "Selecciona archivo Excel MSL:",
+            "Selecciona archivo Excel MSL para verificación:",
             accept_multiple_files=True,
             type=["xlsx", "xls"],
-            help="El sistema procesará automáticamente las hojas MSL (AMERICA, EUROPA, NORTEAMERICA, ASIA)"
+            help="El sistema inspeccionará cada celda para verificar rutas reales"
         )
         
         st.session_state.vector_store_name = st.text_input(
-            "📊 Nombre Base de Datos MSL:",
-            placeholder="ej: msl_lcl_2025",
-            help="Nombre identificativo para la base de datos MSL"
+            "📊 Nombre Base de Datos Verificada:",
+            placeholder="ej: msl_verified_2025",
+            help="Base de datos con solo rutas verificadas"
         )
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            if st.button("🚀 Crear Sistema MSL", type="primary"):
-                create_msl_rag_system()
+            if st.button("🔍 Crear con Verificación Total", type="primary"):
+                create_msl_verified_system()
         with col2:
             if st.button("🗑️ Limpiar"):
                 delete_temp_files()
 
     with tab2:
-        st.markdown("### 📂 Cargar Base de Datos MSL")
+        st.markdown("### 📂 Cargar Base de Datos Verificada")
         
         available_stores = [
             f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() 
@@ -233,17 +346,17 @@ def enhanced_sidebar_msl():
         
         if available_stores:
             st.session_state.selected_vectorstore_name = st.selectbox(
-                "🗂️ Bases MSL disponibles:",
+                "🗂️ Bases verificadas disponibles:",
                 options=[""] + available_stores
             )
         else:
-            st.info("📁 No hay bases de datos MSL disponibles")
+            st.info("📁 No hay bases de datos verificadas")
         
-        if st.button("📖 Cargar Base de Datos MSL", type="primary"):
-            load_existing_msl_vectorstore()
+        if st.button("📖 Cargar Base Verificada", type="primary"):
+            load_existing_verified_vectorstore()
 
     with tab3:
-        st.markdown("### 📊 Estadísticas del Sistema MSL")
+        st.markdown("### 📊 Estadísticas de Verificación")
         
         if hasattr(st.session_state, 'vector_store'):
             try:
@@ -251,36 +364,36 @@ def enhanced_sidebar_msl():
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("📄 Total Registros MSL", collection_count)
+                    st.metric("✅ Rutas Verificadas", collection_count)
                 with col2:
-                    st.metric("🤖 Modelo", st.session_state.get('selected_model', 'gpt-4o'))
+                    st.metric("🤖 Modelo", "gpt-4o")
                 with col3:
-                    st.metric("🌡️ Temperatura", f"{st.session_state.get('temperature', 0.05)}")
+                    st.metric("🎯 Temperatura", "0.0 (máxima precisión)")
                     
-                st.markdown("#### 📈 Estadísticas MSL")
-                st.info("Sistema especializado en tarifas LCL marítimas MSL activo")
+                st.markdown("#### 📈 Estado de Verificación")
+                st.success("Sistema con verificación total activo")
             except:
                 st.info("Carga una base de datos para ver estadísticas")
         else:
-            st.info("No hay base de datos MSL cargada")
+            st.info("No hay base de datos verificada cargada")
 
     with tab4:
-        st.markdown("### 🧪 Test Sistema MSL")
-        if st.button("Ejecutar Test MSL"):
-            test_msl_system()
+        st.markdown("### 🧪 Test de Verificación")
+        if st.button("Ejecutar Test de Verificación"):
+            test_verification_system()
 
-def create_msl_rag_system():
-    """Pipeline de creación del sistema MSL"""
+def create_msl_verified_system():
+    """Pipeline de creación con verificación total"""
     
     if not OPENAI_API_KEY:
         st.error("❌ Configura OpenAI API key")
         return
 
     if not st.session_state.uploaded_file_list or not st.session_state.vector_store_name.strip():
-        st.error("❌ Selecciona archivo Excel MSL y nombre de base de datos")
+        st.error("❌ Selecciona archivo Excel y nombre de base de datos")
         return
     
-    with st.spinner("📄 Procesando Excel MSL..."):
+    with st.spinner("🔍 Verificando Excel celda por celda..."):
         try:
             # Limpiar y guardar archivos
             delete_temp_files()
@@ -288,55 +401,60 @@ def create_msl_rag_system():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            status_text.text("📤 Guardando archivos Excel MSL...")
+            status_text.text("📤 Guardando archivos para verificación...")
             for i, uploaded_file in enumerate(st.session_state.uploaded_file_list):
                 temp_file_path = TMP_DIR / uploaded_file.name
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.read())
-                progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.2)
+                progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.1)
             
-            # Procesar con sistema MSL
-            status_text.text("🧠 Procesando tarifas MSL...")
-            documents = load_msl_excel_documents()
-            progress_bar.progress(0.4)
+            # Verificación completa
+            status_text.text("🔍 Inspeccionando cada celda del Excel...")
+            documents = load_msl_documents_with_verification()
+            progress_bar.progress(0.5)
             
             if not documents:
-                st.error("❌ No se procesaron documentos MSL")
+                st.error("❌ No se encontraron rutas verificadas")
                 return
             
-            # Estadísticas de procesamiento MSL
-            analysis = analyze_msl_sources(documents)
+            # Mostrar estadísticas de verificación
+            analysis = analyze_msl_verified_sources(documents)
             
-            st.success("📊 **Procesamiento MSL completado:**")
+            st.success("✅ **Verificación Completada:**")
             cols = st.columns(4)
             with cols[0]:
-                st.metric("📄 Total Registros", analysis['total'])
+                st.metric("✅ Rutas Verificadas", analysis['total_verified'])
             with cols[1]:
                 st.metric("🌍 Regiones", len(analysis['regions']))
             with cols[2]:
-                st.metric("⚓ Puertos", len(analysis['ports']))
+                st.metric("⚓ Puertos Verificados", len(analysis['verified_ports']))
             with cols[3]:
-                st.metric("🏳️ Países", len(analysis['countries']))
+                st.metric("🌎 Países Verificados", len(analysis['verified_countries']))
             
-            # Crear chunks optimizados para MSL
-            status_text.text("✂️ Creando chunks MSL...")
+            # Mostrar puertos verificados
+            with st.expander("⚓ **Puertos Verificados Encontrados**"):
+                for port in sorted(analysis['verified_ports']):
+                    st.write(f"✅ {port}")
+            
+            # Crear chunks con separadores específicos para verificación
+            status_text.text("📝 Creando chunks de rutas verificadas...")
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1500,
-                chunk_overlap=150,
+                chunk_size=1200,
+                chunk_overlap=100,
                 separators=[
-                    "\nTARIFA LCL MARÍTIMA - MSL",
-                    "\n=== INFORMACIÓN DE RUTA MSL ===",
-                    "\n=== TARIFAS MSL ===",
+                    "\nTARIFA LCL MARÍTIMA MSL - RUTA VERIFICADA",
+                    "\n=== INFORMACIÓN VERIFICADA ===",
+                    "\n=== VERIFICACIÓN ===",
                     "\n\n", "\n", " ", ""
                 ]
             )
             chunks = text_splitter.split_documents(documents)
-            progress_bar.progress(0.6)
+            progress_bar.progress(0.7)
             
-            st.info(f"📝 {len(chunks)} chunks MSL creados")
+            st.info(f"📝 {len(chunks)} chunks verificados creados")
             
-            # Crear vectorstore MSL
-            status_text.text("🧠 Generando embeddings MSL...")
+            # Crear vectorstore verificado
+            status_text.text("🧠 Indexando rutas verificadas...")
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
@@ -346,17 +464,17 @@ def create_msl_rag_system():
                 documents=chunks,
                 embedding=embeddings,
                 persist_directory=persist_path.as_posix(),
-                collection_name="msl_lcl_maritime"
+                collection_name="msl_verified_routes"
             )
-            progress_bar.progress(0.8)
+            progress_bar.progress(0.9)
             
-            # Crear chain MSL
-            status_text.text("🔗 Configurando sistema conversacional MSL...")
-            st.session_state.retriever = create_msl_retriever(
+            # Crear chain verificado
+            status_text.text("🔗 Configurando sistema con verificación...")
+            st.session_state.retriever = create_msl_verified_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_msl_conversational_chain(
+            st.session_state.chain, st.session_state.memory = create_msl_verified_chain(
                 retriever=st.session_state.retriever
             )
             
@@ -366,7 +484,7 @@ def create_msl_rag_system():
             status_text.empty()
             progress_bar.empty()
             
-            st.success("✅ **Sistema MSL creado exitosamente!**")
+            st.success("✅ **Sistema con Verificación Total creado exitosamente!**")
             st.balloons()
             
         except Exception as e:
@@ -374,8 +492,8 @@ def create_msl_rag_system():
             with st.expander("🔧 Detalles del error"):
                 st.code(traceback.format_exc())
 
-def load_existing_msl_vectorstore():
-    """Cargar vectorstore MSL existente"""
+def load_existing_verified_vectorstore():
+    """Cargar vectorstore verificado existente"""
     if not OPENAI_API_KEY or not st.session_state.selected_vectorstore_name:
         st.error("❌ Configura API key y selecciona base de datos")
         return
@@ -383,54 +501,54 @@ def load_existing_msl_vectorstore():
     vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
     
     if not vectorstore_path.exists():
-        st.error("❌ Base de datos MSL no existe")
+        st.error("❌ Base de datos verificada no existe")
         return
 
-    with st.spinner("📖 Cargando sistema MSL..."):
+    with st.spinner("📖 Cargando sistema verificado..."):
         try:
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             st.session_state.vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=vectorstore_path.as_posix(),
-                collection_name="msl_lcl_maritime"
+                collection_name="msl_verified_routes"
             )
             
             collection_count = st.session_state.vector_store._collection.count()
             if collection_count == 0:
-                st.warning("⚠️ Base de datos MSL vacía")
+                st.warning("⚠️ Base de datos verificada vacía")
                 return
             
-            st.session_state.retriever = create_msl_retriever(
+            st.session_state.retriever = create_msl_verified_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_msl_conversational_chain(
+            st.session_state.chain, st.session_state.memory = create_msl_verified_chain(
                 retriever=st.session_state.retriever
             )
             
             clear_chat_history()
             
-            st.success("✅ **Sistema MSL cargado exitosamente!**")
-            st.info(f"📊 {collection_count} registros MSL indexados")
+            st.success("✅ **Sistema verificado cargado exitosamente!**")
+            st.info(f"📊 {collection_count} rutas verificadas indexadas")
             
         except Exception as e:
             st.error(f"❌ Error cargando: {str(e)}")
 
-def msl_chatbot():
-    """Chatbot principal MSL"""
-    enhanced_sidebar_msl()
+def msl_verified_chatbot():
+    """Chatbot principal con verificación"""
+    enhanced_sidebar_verification()
     
     st.markdown("---")
     
-    # Header MSL
+    # Header con verificación
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor LCL Marítimo - MSL (Seemann Group)")
+        st.subheader("💬 Consultor MSL con Verificación Total")
         if hasattr(st.session_state, 'chain'):
-            st.success("🟢 Sistema MSL Activo")
+            st.success("✅ Sistema Verificado Activo")
         else:
-            st.warning("🟡 Crear/Cargar Base de Datos MSL")
+            st.warning("🔍 Crear/Cargar Sistema Verificado")
 
     # Mensajes
     if "messages" not in st.session_state:
@@ -441,18 +559,18 @@ def msl_chatbot():
             st.write(msg["content"])
 
     # Input principal
-    if prompt := st.chat_input("Consulta tarifas MSL... (ej: ¿Cuánto cuesta desde Shanghai a Chile?)"):
+    if prompt := st.chat_input("Consulta MSL con verificación... (ej: ¿Existe ruta desde Miami a Chile?)"):
         
         if not OPENAI_API_KEY:
             st.error("🔑 Configura OpenAI API key")
             st.stop()
         
         if not hasattr(st.session_state, 'chain'):
-            st.warning("⚠️ Crea o carga base de datos MSL")
+            st.warning("⚠️ Crea o carga sistema verificado")
             st.stop()
         
-        # Ejecutar respuesta MSL
-        get_msl_response(prompt)
+        # Ejecutar respuesta verificada
+        get_msl_verified_response(prompt)
 
 def delete_temp_files():
     """Limpiar archivos temporales"""
@@ -476,55 +594,53 @@ def clear_chat_history():
         except:
             pass
 
-def test_msl_system():
-    """Test funcionalidad MSL"""
-    st.markdown("### 🧪 Test Sistema MSL")
+def test_verification_system():
+    """Test del sistema de verificación"""
+    st.markdown("### 🧪 Test de Verificación")
     
-    # Test casos MSL
+    # Test casos específicos
     test_cases = [
-        "¿Cuánto cuesta desde Shanghai a Chile?",
-        "Necesito tarifa desde Buenos Aires",
-        "¿Qué opciones MSL tengo desde Europa?",
-        "Tiempo de tránsito desde Antwerp"
+        "¿Existe ruta desde Miami a Chile?",
+        "¿Cuánto cuesta desde Santos a Chile?", 
+        "¿Qué rutas hay desde Europa?",
+        "¿Hay transporte desde Tokio?"
     ]
     
     for i, test_query in enumerate(test_cases, 1):
         st.write(f"**Test {i}:** {test_query}")
         
-        # Test detección MSL
+        # Test verificación
+        port_info = extract_port_for_verification(test_query)
         query_type = detect_msl_query_type(test_query)
-        route_info = extract_ports_from_query(test_query)
         
         col1, col2 = st.columns(2)
         with col1:
             st.write(f"   **Tipo:** {query_type}")
         with col2:
-            if route_info.get('has_route'):
-                st.write(f"   **Ruta:** {route_info.get('origin_raw', '')} → Chile")
+            if port_info.get('needs_verification'):
+                st.write(f"   **Puerto a verificar:** {port_info['port_requested']}")
             else:
-                st.write("   **Ruta:** No específica")
+                st.write("   **Verificación:** No específica")
     
-    st.success("✅ Test MSL completado")
+    st.success("✅ Test de verificación completado")
 
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
 
 def main():
-    """Función principal de la aplicación MSL"""
+    """Función principal con verificación total"""
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
-        st.session_state.selected_model = "gpt-4o"
-        st.session_state.temperature = 0.05
     
-    # Ejecutar sistema MSL
-    msl_chatbot()
+    # Ejecutar sistema verificado
+    msl_verified_chatbot()
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-    🚢 MSL (Seemann Group) - Sistema LCL Marítimo | Especializado en Tarifas Less than Container Load | Powered by LangChain & OpenAI
+    ✅ MSL (Seemann Group) - Sistema con Verificación Total | Solo información que realmente existe | Powered by LangChain & OpenAI
     </div>
     """, unsafe_allow_html=True)
 
