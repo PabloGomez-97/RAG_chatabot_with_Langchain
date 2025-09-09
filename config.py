@@ -369,7 +369,7 @@ def detect_company_from_excel(file_path: str) -> dict:
                     elif "MSL" in cell_value or "SEEMANN" in cell_value:
                         return {
                             "company": "MSL", 
-                            "structure_type": "msl_lcl",
+                            "structure_type": "_lcl",
                             "header_row": 3,
                             "has_pod_column": False,
                             "identification_cell": f"{chr(65+col)}{row+1}",
@@ -582,3 +582,42 @@ DOCUMENTOS MULTI-EMPRESA: {context}
 CONSULTA CLIENTE: {question}
 
 RESPUESTA ESPECIALIZADA MULTI-EMPRESA:"""
+
+def extract_msl_route_from_query(query: str) -> dict:
+    """Detecta si la consulta tiene patrón de ruta específica"""
+    query_lower = query.lower().strip()
+    
+    patterns = [
+        r'desde\s+([^a-z]+?)\s+(?:hacia|hasta|a)\s+([^?,.]+)',
+        r'de\s+([^a-z]+?)\s+a\s+([^?,.]+)',
+        r'(?:costo|precio|tarifa)\s+([a-zA-Z\s]+?)\s+([a-zA-Z\s]+?)(?:\s|$|[?.,])',
+        r'transporte\s+desde\s+([^a-z]+?)\s+(?:hacia|hasta|a)\s+([^?,.]+)'
+    ]
+    
+    import re
+    for pattern in patterns:
+        match = re.search(pattern, query_lower, re.IGNORECASE)
+        if match:
+            origin_raw = match.group(1).strip()
+            destination_raw = match.group(2).strip()
+            
+            return {
+                'has_route': True,
+                'origin_raw': origin_raw,
+                'destination_raw': destination_raw,
+                'origin_cleaned': clean_port_name(origin_raw),
+                'destination_cleaned': clean_port_name(destination_raw)
+            }
+    
+    return {'has_route': False}
+
+def clean_port_name(port_text: str) -> str:
+    """Limpia nombres de puertos"""
+    if not port_text:
+        return ""
+    
+    stop_words = ['el', 'la', 'los', 'las', 'de', 'del', 'y', 'puerto', 'port']
+    words = port_text.strip().split()
+    cleaned_words = [word for word in words if word.lower() not in stop_words]
+    
+    return ' '.join(cleaned_words)

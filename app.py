@@ -19,7 +19,8 @@ from core import (
     create_lcl_retriever,
     multi_query_lcl_retriever,
     validate_lcl_response,
-    analyze_lcl_sources
+    analyze_lcl_sources,
+    
 )
 
 ####################################################################
@@ -41,28 +42,61 @@ st.markdown("*Consultor especializado en tarifas LCL (Less than Container Load) 
 ####################################################################
 
 def get_lcl_response(prompt):
-    """Función principal de respuesta LCL con soporte multi-empresa
+    """Función principal de respuesta LCL con soporte multi-empresa mejorado
     
     Explicación:
-    - Detecta si el usuario prefiere una empresa específica
-    - Filtra documentos por empresa si es necesario
-    - Usa template multi-empresa que adapta respuesta según empresas encontradas
+    - Detecta consultas de ruta específica para mostrar todas las empresas
+    - Detecta preferencias de empresa específica para filtrar resultados
+    - Usa búsqueda optimizada MSL cuando es explícitamente solicitado
+    - Mantiene comparación multi-empresa para decisiones ejecutivas
     """
     try:
         with st.spinner("🔍 Analizando consulta LCL multi-empresa..."):
             
-            # PASO 1: Detectar preferencia de empresa del usuario
-            from config import detect_query_company_preference
-            company_preference = detect_query_company_preference(prompt)
+            # PASO 1: Detectar tipo de consulta y preferencias
+            from config import detect_query_company_preference, extract_msl_route_from_query
             
-            # PASO 2: Buscar documentos relevantes
+            company_preference = detect_query_company_preference(prompt)
+            route_info = extract_msl_route_from_query(prompt)
+            
+            # Determinar estrategia de búsqueda
+            is_explicit_company = company_preference != 'ALL'
+            is_route_query = route_info.get('has_route', False)
+            
+            # PASO 2: Buscar documentos según tipo de consulta
             if hasattr(st.session_state, 'vector_store'):
-                all_relevant_docs = multi_query_lcl_retriever(
-                    st.session_state.vector_store, prompt
-                )
                 
-                # PASO 3: Filtrar por empresa si el usuario especificó una
-                if company_preference != 'ALL':
+                if is_explicit_company and not is_route_query:
+                    # Usuario pidió empresa específica sin ruta (ej: "MSL opciones")
+                    if company_preference == 'MSL':
+                        from core import msl_query_retriever
+                        all_relevant_docs = msl_query_retriever(st.session_state.vector_store, prompt)
+                    else:
+                        # Usar búsqueda normal para otras empresas específicas
+                        all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
+                        
+                elif is_explicit_company and is_route_query:
+                    # Usuario pidió empresa específica CON ruta (ej: "MSL desde Shanghai a San Antonio")
+                    if company_preference == 'MSL':
+                        from core import msl_query_retriever
+                        all_relevant_docs = msl_query_retriever(st.session_state.vector_store, prompt)
+                    else:
+                        # Usar búsqueda normal pero filtrar por empresa después
+                        all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
+                        
+                elif is_route_query and not is_explicit_company:
+                    # Consulta de ruta genérica (ej: "desde Shanghai a San Antonio")
+                    # MOSTRAR TODAS LAS EMPRESAS para comparación ejecutiva
+                    all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
+                    # Forzar mostrar todas las empresas disponibles
+                    company_preference = 'ALL'
+                    
+                else:
+                    # Consulta general
+                    all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
+                
+                # PASO 3: Filtrar por empresa solo si es necesario
+                if company_preference != 'ALL' and not (is_route_query and not is_explicit_company):
                     filtered_by_company = []
                     for doc in all_relevant_docs:
                         if doc.metadata.get('company', '').upper() == company_preference.upper():
@@ -72,6 +106,11 @@ def get_lcl_response(prompt):
                     if filtered_by_company:
                         all_relevant_docs = filtered_by_company
                         st.info(f"🏢 Mostrando solo resultados de: {company_preference}")
+                elif is_route_query and not is_explicit_company:
+                    # Para consultas de ruta genérica, mostrar mensaje informativo
+                    companies_in_results = set(doc.metadata.get('company', 'UNKNOWN') for doc in all_relevant_docs)
+                    if len(companies_in_results) > 1:
+                        st.success(f"🔄 Comparando opciones de: {', '.join(companies_in_results)}")
                 
                 # PASO 4: Filtrar por relevancia LCL
                 from config import validate_lcl_document_relevance
@@ -89,10 +128,17 @@ def get_lcl_response(prompt):
                     with col1:
                         st.info(f"**Empresas Detectadas:** {', '.join(companies_found)}")
                         st.info(f"**Preferencia Usuario:** {company_preference}")
+                        # Información de ruta detectada
+                        if route_info.get('has_route'):
+                            origin = route_info.get('origin_cleaned', 'N/A')
+                            destination = route_info.get('destination_cleaned', 'N/A')
+                            st.write(f"**Ruta Detectada:** {origin} → {destination}")
                     
                     with col2:
                         st.write(f"**Documentos Totales:** {len(all_relevant_docs)}")
                         st.write(f"**Documentos Filtrados:** {len(filtered_docs)}")
+                        st.write(f"**Es Consulta de Ruta:** {'Sí' if is_route_query else 'No'}")
+                        st.write(f"**Empresa Explícita:** {'Sí' if is_explicit_company else 'No'}")
                         
                         # Mostrar distribución por empresa
                         for company in companies_found:
@@ -117,8 +163,8 @@ def get_lcl_response(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Métricas multi-empresa
-                display_multi_company_metrics(validation, companies_found, company_preference)
+                # Métricas multi-empresa con información de ruta
+                display_multi_company_metrics_enhanced(validation, companies_found, company_preference, route_info, is_route_query)
                 
                 # Análisis de fuentes multi-empresa
                 with st.expander("📋 **Análisis de Fuentes Multi-Empresa**"):
@@ -128,6 +174,59 @@ def get_lcl_response(prompt):
         st.error(f"Error en sistema multi-empresa: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
+
+
+def display_multi_company_metrics_enhanced(validation: dict, companies_found: set, company_preference: str, route_info: dict, is_route_query: bool):
+    """Muestra métricas mejoradas con información de ruta"""
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        completeness = validation.get('completeness', 0)
+        if completeness >= 0.8:
+            st.success(f"✅ **Completitud** ({completeness:.0%})")
+        elif completeness >= 0.5:
+            st.warning(f"⚠️ **Completitud** ({completeness:.0%})")
+        else:
+            st.error(f"❌ **Completitud** ({completeness:.0%})")
+    
+    with col2:
+        if is_route_query:
+            if route_info.get('has_route'):
+                origin = route_info.get('origin_cleaned', 'N/A')
+                destination = route_info.get('destination_cleaned', 'N/A')
+                st.success(f"🎯 **Ruta:** {origin} → {destination}")
+            else:
+                st.info("🔍 **Consulta de ruta detectada**")
+        else:
+            if len(companies_found) > 1:
+                st.success(f"🔄 **Multi-Empresa** ({len(companies_found)} empresas)")
+            elif len(companies_found) == 1:
+                company = list(companies_found)[0]
+                st.info(f"🏢 **{company}** (1 empresa)")
+            else:
+                st.warning("⚠️ **Sin Empresas** detectadas")
+    
+    with col3:
+        if company_preference == 'ALL':
+            if is_route_query:
+                st.info("🌍 **Comparando:** Todas las opciones")
+            else:
+                st.info("🌍 **Consulta:** Todas las empresas")
+        else:
+            st.info(f"🎯 **Específica:** {company_preference}")
+    
+    # Mostrar advertencias específicas
+    if validation.get('warnings'):
+        with st.expander("⚠️ **Advertencias**"):
+            for warning in validation['warnings']:
+                st.write(f"• {warning}")
+    
+    # Mostrar sugerencias
+    if validation.get('suggestions'):
+        with st.expander("💡 **Sugerencias**"):
+            for suggestion in validation['suggestions']:
+                st.write(f"• {suggestion}")
 
 def display_lcl_metrics(validation: dict, query_type: str, route_info: dict):
     """Muestra métricas específicas para LCL"""

@@ -989,6 +989,34 @@ def normalize_ecu_currency(value: str, currency: str) -> str:
 
 # Funciones auxiliares (agregar también):
 
+def msl_query_retriever(vector_store, original_query: str) -> List[Document]:
+    """Búsqueda optimizada para MSL cuando es explícitamente solicitado"""
+    retriever = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 20})
+    
+    # Generar consultas optimizadas para MSL
+    search_queries = [
+        original_query,
+        f"{original_query} MSL",
+        f"{original_query} Seemann",
+        original_query.replace('MSL', '').replace('Seemann', '').strip()
+    ]
+    
+    all_docs = []
+    seen_docs = set()
+    
+    for query in search_queries:
+        try:
+            docs = retriever.get_relevant_documents(query)
+            for doc in docs:
+                doc_hash = hash(doc.page_content[:200])
+                if doc_hash not in seen_docs:
+                    all_docs.append(doc)
+                    seen_docs.add(doc_hash)
+        except:
+            continue
+    
+    return all_docs[:15]
+
 def safe_get_cell(df: pd.DataFrame, row: int, col: int) -> str:
     """Obtiene valor de celda de forma segura"""
     try:
