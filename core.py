@@ -131,7 +131,7 @@ class MSLExcelInspector:
         """Encuentra fila de encabezados inspeccionando contenido real"""
         
         # Palabras clave que indican fila de encabezados MSL
-        header_keywords = ['POL', 'PAIS', 'PAÍS', 'PUERTO', 'TON', 'M3', 'MINIMO', 'MÍNIMO', 'FREC', 'SERVICIO', 'AGENTE']
+        header_keywords = ['POL', 'PAIS', 'PAÍS', 'PUERTO', 'TON', 'M3', 'MINIMO', 'MÍNIMO', 'FREC', 'SERVICIO', 'AGENTE', "COMPANY"]
         
         for row_idx in range(min(15, len(df))):
             row_content = []
@@ -198,6 +198,8 @@ class MSLExcelInspector:
                 mapping['agente'] = idx
             elif 'OBSERVACIONES' in header_upper:
                 mapping['observaciones'] = idx
+            elif 'COMPANY' in header_upper:
+                mapping['company'] = idx
         
         return mapping
     
@@ -227,6 +229,7 @@ class MSLExcelInspector:
             servicio = self._get_safe_cell_value(df, row_idx, column_mapping.get('servicio', 7))
             agente = self._get_safe_cell_value(df, row_idx, column_mapping.get('agente', 8))
             observaciones = self._get_safe_cell_value(df, row_idx, column_mapping.get('observaciones', 9))
+            company = self._get_safe_cell_value(df, row_idx, column_mapping.get('company', -1))
             
             # VERIFICACIÓN ESTRICTA: Solo acepta filas con datos mínimos válidos
             if puerto_origen and pais and puerto_origen.strip() and pais.strip():
@@ -247,6 +250,7 @@ class MSLExcelInspector:
                     'servicio': servicio,
                     'agente': agente,
                     'observaciones': observaciones,
+                    'company': company,
                     'sheet_name': sheet_name,
                     'row_number': row_idx + 1
                 }
@@ -263,7 +267,7 @@ class MSLExcelInspector:
     def _get_safe_cell_value(self, df: pd.DataFrame, row: int, col: int) -> str:
         """Obtiene valor de celda de forma segura"""
         try:
-            if row >= len(df) or col >= len(df.columns):
+            if row >= len(df) or col < 0 or col >= len(df.columns):
                 return ""
             
             value = df.iloc[row, col]
@@ -321,6 +325,7 @@ class MSLVerifiedProcessor:
         puerto_origen = raw_data['puerto_origen']
         pais = raw_data['pais']
         sheet_name = raw_data['sheet_name']
+        company_value = raw_data.get('company') or 'No especificado'
         
         # Normalizar datos solo si existen
         tarifa_text = self._safe_format_currency(raw_data.get('tarifa', ''))
@@ -339,6 +344,7 @@ PUERTO ORIGEN: {puerto_origen}
 PAÍS ORIGEN: {pais}
 DESTINO: Chile (San Antonio/Valparaíso)
 REGIÓN MSL: {sheet_name}
+COMPANY: {raw_data.get('company', 'No especificado')}
 
 === TARIFAS VERIFICADAS ===
 TARIFA TON/M³: {tarifa_text}
@@ -349,6 +355,8 @@ FRECUENCIA: {raw_data.get('frecuencia', 'No especificado')}
 === SERVICIO VERIFICADO ===
 TIPO SERVICIO: {raw_data.get('servicio', 'No especificado')}
 AGENTE LOCAL: {raw_data.get('agente', 'No especificado')}
+COSTOS ADICIONALES: {raw_data.get('otros', 'No especificado')}
+COMPANIA LOCAL: {raw_data.get('company', 'No especificado')}
 
 === OBSERVACIONES VERIFICADAS ===
 {raw_data.get('observaciones', 'Sin observaciones')}
@@ -365,6 +373,7 @@ AGENTE LOCAL: {raw_data.get('agente', 'No especificado')}
             "sheet_name": sheet_name,
             "puerto_origen": puerto_origen,
             "pais_origen": pais,
+            "company": raw_data.get('company', 'No especificado'),  # ← NUEVO: Agregar company a metadata
             "row_number": raw_data['row_number'],
             "verification_status": "VERIFIED",
             "route_exists": True,
@@ -461,6 +470,7 @@ def create_msl_verified_retriever(vector_store, k=30):
     )
 
 def create_msl_verified_chain(retriever):
+    from langchain.prompts import PromptTemplate
     """Crea chain conversacional con verificación estricta"""
     
     condense_question_prompt = PromptTemplate(
@@ -479,6 +489,19 @@ Pregunta reformulada para verificación:""",
     )
 
     answer_prompt = ChatPromptTemplate.from_template(get_msl_response_template())
+    
+    doc_prompt = PromptTemplate(
+        input_variables=["page_content","company","sheet_name","row_number","puerto_origen","pais_origen"],
+        template=(
+            "{page_content}\n\n"
+            "[METADATOS]\n"
+            "Company: {company}\n"
+            "Hoja: {sheet_name}\n"
+            "Fila: {row_number}\n"
+            "Puerto: {puerto_origen}\n"
+            "País: {pais_origen}\n"
+        )
+    )
     
     memory = ConversationBufferMemory(
         return_messages=True,
@@ -502,7 +525,7 @@ Pregunta reformulada para verificación:""",
 
     chain = ConversationalRetrievalChain.from_llm(
         condense_question_prompt=condense_question_prompt,
-        combine_docs_chain_kwargs={"prompt": answer_prompt},
+        combine_docs_chain_kwargs={"prompt": answer_prompt, "document_prompt": doc_prompt,},
         condense_question_llm=standalone_query_llm,
         llm=response_llm,
         memory=memory,
@@ -573,7 +596,8 @@ def analyze_msl_verified_sources(sources: List[Document]) -> Dict[str, Any]:
         "total_verified": 0,
         "regions": {},
         "verified_ports": set(),
-        "verified_countries": set()
+        "verified_countries": set(),
+        "companies": {}  # ← NUEVO: Agregar análisis por company
     }
     
     for doc in sources:
@@ -593,5 +617,10 @@ def analyze_msl_verified_sources(sources: List[Document]) -> Dict[str, Any]:
             pais = doc.metadata.get('pais_origen', '')
             if pais:
                 analysis['verified_countries'].add(pais)
+            
+            # ← NUEVO: Companies verificadas
+            company = doc.metadata.get('company', 'No especificado')
+            if company:
+                analysis['companies'][company] = analysis['companies'].get(company, 0) + 1
     
     return analysis

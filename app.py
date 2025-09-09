@@ -204,12 +204,18 @@ def display_all_options_analysis(sources: list, requested_port: str):
                 with col1:
                     st.write(f"**Puerto:** {doc.metadata.get('puerto_origen', 'N/A')}")
                     st.write(f"**País:** {doc.metadata.get('pais_origen', 'N/A')}")
+                    st.write(f"**Company:** {doc.metadata.get('company', 'N/A')}")
                     st.write(f"**Fila Excel:** {doc.metadata.get('row_number', 'N/A')}")
                     st.write(f"**Hoja:** {doc.metadata.get('sheet_name', 'N/A')}")
                 
                 with col2:
                     st.write(f"**Estado:** {doc.metadata.get('verification_status', 'N/A')}")
                     st.write(f"**Tipo contenido:** {doc.metadata.get('content_type', 'N/A')}")
+                    # Mostrar tarifa si está disponible en metadata
+                    if 'tarifa' in doc.metadata:
+                        st.write(f"**Tarifa:** {doc.metadata.get('tarifa', 'N/A')}")
+                    if 'servicio' in doc.metadata:
+                        st.write(f"**Servicio:** {doc.metadata.get('servicio', 'N/A')}")
     else:
         # Mostrar análisis general
         verified_sources = [doc for doc in sources if doc.metadata.get('verification_status') == 'VERIFIED']
@@ -226,6 +232,12 @@ def display_all_options_analysis(sources: list, requested_port: str):
             st.write("**Por región:**")
             for region, count in analysis.get('regions', {}).items():
                 st.write(f"🌍 {region}: {count}")
+            
+            # ← NUEVO: Mostrar companies si están disponibles
+            if 'companies' in analysis and analysis['companies']:
+                st.write("**Por Company:**")
+                for company, count in analysis['companies'].items():
+                    st.write(f"🏢 {company}: {count}")
 
 def display_verification_metrics(validation: dict, source_docs: list):
     """Muestra métricas de verificación"""

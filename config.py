@@ -76,24 +76,28 @@ FORMATO OBLIGATORIO PARA MÚLTIPLES OPCIONES:
 📋 **OPCIÓN 1:**
 - **Puerto de Origen:** [PUERTO_EXACTO]
 - **País Origen:** [PAÍS_EXACTO]
+- **Company:** [COMPANY_1] (si está disponible)
 - **Destino:** Chile (San Antonio/Valparaíso)
-- **TON / M3 Usd:** [TARIFA_1] (si está disponible)
+- **TON / M3 Usd/Eur:** [TARIFA_1] (si está disponible)
 - **Mínimo:** [MÍNIMO_1] (si está disponible)
 - **Tiempo Tránsito:** [DÍAS_1] (si está disponible)
 - **Frecuencia:** [FRECUENCIA_1] (si está disponible)
 - **Tipo Servicio:** [SERVICIO_1] (si está disponible)
 - **Agente Local:** [AGENTE_1] (si está disponible)
+- **Costos Adicionales:** [OTROS_1] (si está disponible)
 
 📋 **OPCIÓN 2:**
 - **Puerto de Origen:** [PUERTO_EXACTO]
 - **País Origen:** [PAÍS_EXACTO]
+- **Company:** [COMPANY_2] (si está disponible)
 - **Destino:** Chile (San Antonio/Valparaíso)
-- **TON / M3 Usd:** [TARIFA_2] (si está disponible)
+- **TON / M3 Usd/Eur:** [TARIFA_2] (si está disponible)
 - **Mínimo:** [MÍNIMO_2] (si está disponible)
 - **Tiempo Tránsito:** [DÍAS_2] (si está disponible)
 - **Frecuencia:** [FRECUENCIA_2] (si está disponible)
 - **Tipo Servicio:** [SERVICIO_2] (si está disponible)
 - **Agente Local:** [AGENTE_2] (si está disponible)
+- **Costos Adicionales:** [OTROS_2] (si está disponible)
 
 [Continuar con OPCIÓN 3, 4, etc. si hay más opciones]
 
@@ -101,6 +105,7 @@ FORMATO OBLIGATORIO PARA MÚLTIPLES OPCIONES:
 - **Más económica:** [Opción X - precio]
 - **Más rápida:** [Opción Y - días]
 - **Servicio directo:** [Si hay opción directa]
+- **Por company:** [Agrupar opciones por company si hay múltiples]
 - **Recomendación:** [Análisis según necesidades típicas]
 
 ⚠️ **OBSERVACIONES IMPORTANTES:**
