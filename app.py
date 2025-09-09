@@ -7,20 +7,19 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
-# Importar módulos locales
+# Importar módulos locales MSL
 from config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
-    TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_lcl_query_type,
-    extract_ports_from_query, validate_lcl_document_relevance
+    TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_msl_query_type,
+    extract_ports_from_query, validate_msl_document_relevance
 )
 from core import (
-    load_lcl_excel_documents, 
-    create_lcl_conversational_chain,
-    create_lcl_retriever,
-    multi_query_lcl_retriever,
-    validate_lcl_response,
-    analyze_lcl_sources,
-    
+    load_msl_excel_documents, 
+    create_msl_conversational_chain,
+    create_msl_retriever,
+    multi_query_msl_retriever,
+    validate_msl_response,
+    analyze_msl_sources
 )
 
 ####################################################################
@@ -28,133 +27,58 @@ from core import (
 ####################################################################
 
 st.set_page_config(
-    page_title="Seemann Group - LCL Marítimo",
+    page_title="MSL - LCL Marítimo",
     page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🚢 Seemann Group - Sistema LCL Marítimo")  
-st.markdown("*Consultor especializado en tarifas LCL (Less than Container Load) marítimas*")
+st.title("🚢 MSL (Seemann Group) - Sistema LCL Marítimo")  
+st.markdown("*Consultor especializado en tarifas LCL (Less than Container Load) marítimas MSL*")
 
 ####################################################################
-#            FUNCIONES PRINCIPALES LCL
+#            FUNCIONES PRINCIPALES MSL
 ####################################################################
 
-def get_lcl_response(prompt):
-    """Función principal de respuesta LCL con soporte multi-empresa mejorado
-    
-    Explicación:
-    - Detecta consultas de ruta específica para mostrar todas las empresas
-    - Detecta preferencias de empresa específica para filtrar resultados
-    - Usa búsqueda optimizada MSL cuando es explícitamente solicitado
-    - Mantiene comparación multi-empresa para decisiones ejecutivas
-    """
+def get_msl_response(prompt):
+    """Función principal de respuesta MSL"""
     try:
-        with st.spinner("🔍 Analizando consulta LCL multi-empresa..."):
+        with st.spinner("🔍 Analizando consulta LCL MSL..."):
             
-            # PASO 1: Detectar tipo de consulta y preferencias
-            from config import detect_query_company_preference, extract_msl_route_from_query
+            # PASO 1: Detectar tipo de consulta MSL
+            query_type = detect_msl_query_type(prompt)
+            route_info = extract_ports_from_query(prompt)
             
-            company_preference = detect_query_company_preference(prompt)
-            route_info = extract_msl_route_from_query(prompt)
-            
-            # Determinar estrategia de búsqueda
-            is_explicit_company = company_preference != 'ALL'
-            is_route_query = route_info.get('has_route', False)
-            
-            # PASO 2: Buscar documentos según tipo de consulta
+            # PASO 2: Buscar documentos MSL relevantes
             if hasattr(st.session_state, 'vector_store'):
+                all_relevant_docs = multi_query_msl_retriever(st.session_state.vector_store, prompt)
                 
-                if is_explicit_company and not is_route_query:
-                    # Usuario pidió empresa específica sin ruta (ej: "MSL opciones")
-                    if company_preference == 'MSL':
-                        from core import msl_query_retriever
-                        all_relevant_docs = msl_query_retriever(st.session_state.vector_store, prompt)
-                    else:
-                        # Usar búsqueda normal para otras empresas específicas
-                        all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
-                        
-                elif is_explicit_company and is_route_query:
-                    # Usuario pidió empresa específica CON ruta (ej: "MSL desde Shanghai a San Antonio")
-                    if company_preference == 'MSL':
-                        from core import msl_query_retriever
-                        all_relevant_docs = msl_query_retriever(st.session_state.vector_store, prompt)
-                    else:
-                        # Usar búsqueda normal pero filtrar por empresa después
-                        all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
-                        
-                elif is_route_query and not is_explicit_company:
-                    # Consulta de ruta genérica (ej: "desde Shanghai a San Antonio")
-                    # MOSTRAR TODAS LAS EMPRESAS para comparación ejecutiva
-                    all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
-                    # Forzar mostrar todas las empresas disponibles
-                    company_preference = 'ALL'
-                    
-                else:
-                    # Consulta general
-                    all_relevant_docs = multi_query_lcl_retriever(st.session_state.vector_store, prompt)
+                # PASO 3: Filtrar por relevancia MSL
+                filtered_docs = validate_msl_document_relevance(prompt, all_relevant_docs)
                 
-                # PASO 3: Filtrar por empresa solo si es necesario
-                if company_preference != 'ALL' and not (is_route_query and not is_explicit_company):
-                    filtered_by_company = []
-                    for doc in all_relevant_docs:
-                        if doc.metadata.get('company', '').upper() == company_preference.upper():
-                            filtered_by_company.append(doc)
-                    
-                    # Si encontramos documentos de la empresa específica, usarlos
-                    if filtered_by_company:
-                        all_relevant_docs = filtered_by_company
-                        st.info(f"🏢 Mostrando solo resultados de: {company_preference}")
-                elif is_route_query and not is_explicit_company:
-                    # Para consultas de ruta genérica, mostrar mensaje informativo
-                    companies_in_results = set(doc.metadata.get('company', 'UNKNOWN') for doc in all_relevant_docs)
-                    if len(companies_in_results) > 1:
-                        st.success(f"🔄 Comparando opciones de: {', '.join(companies_in_results)}")
-                
-                # PASO 4: Filtrar por relevancia LCL
-                from config import validate_lcl_document_relevance
-                filtered_docs = validate_lcl_document_relevance(prompt, all_relevant_docs)
-                
-                # PASO 5: Analizar empresas encontradas
-                companies_found = set()
-                for doc in filtered_docs:
-                    company = doc.metadata.get('company', 'UNKNOWN')
-                    companies_found.add(company)
-                
-                with st.expander("🧠 **Análisis Multi-Empresa**", expanded=False):
+                with st.expander("🧠 **Análisis MSL**", expanded=False):
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.info(f"**Empresas Detectadas:** {', '.join(companies_found)}")
-                        st.info(f"**Preferencia Usuario:** {company_preference}")
-                        # Información de ruta detectada
+                        st.info(f"**Tipo Consulta:** {query_type}")
                         if route_info.get('has_route'):
-                            origin = route_info.get('origin_cleaned', 'N/A')
-                            destination = route_info.get('destination_cleaned', 'N/A')
-                            st.write(f"**Ruta Detectada:** {origin} → {destination}")
+                            origin = route_info.get('origin_raw', 'N/A')
+                            st.write(f"**Ruta MSL:** {origin} → Chile")
                     
                     with col2:
                         st.write(f"**Documentos Totales:** {len(all_relevant_docs)}")
                         st.write(f"**Documentos Filtrados:** {len(filtered_docs)}")
-                        st.write(f"**Es Consulta de Ruta:** {'Sí' if is_route_query else 'No'}")
-                        st.write(f"**Empresa Explícita:** {'Sí' if is_explicit_company else 'No'}")
-                        
-                        # Mostrar distribución por empresa
-                        for company in companies_found:
-                            count = sum(1 for doc in filtered_docs if doc.metadata.get('company') == company)
-                            st.write(f"  • {company}: {count} documentos")
             
-            # PASO 6: Ejecutar chain con template multi-empresa
+            # PASO 4: Ejecutar chain MSL
             response = st.session_state.chain.invoke({"question": prompt})
             answer = response["answer"]
             
-            # PASO 7: Validar respuesta
-            validation = validate_lcl_response(
+            # PASO 5: Validar respuesta MSL
+            validation = validate_msl_response(
                 answer, prompt, response.get("source_documents", [])
             )
             
-            # PASO 8: Agregar al historial y mostrar
+            # PASO 6: Agregar al historial y mostrar
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
@@ -163,73 +87,20 @@ def get_lcl_response(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Métricas multi-empresa con información de ruta
-                display_multi_company_metrics_enhanced(validation, companies_found, company_preference, route_info, is_route_query)
+                # Métricas MSL
+                display_msl_metrics(validation, query_type, route_info)
                 
-                # Análisis de fuentes multi-empresa
-                with st.expander("📋 **Análisis de Fuentes Multi-Empresa**"):
-                    analyze_and_display_multi_company_sources(response.get("source_documents", []))
+                # Análisis de fuentes MSL
+                with st.expander("📋 **Análisis de Fuentes MSL**"):
+                    analyze_and_display_msl_sources(response.get("source_documents", []))
                 
     except Exception as e:
-        st.error(f"Error en sistema multi-empresa: {str(e)}")
+        st.error(f"Error en sistema MSL: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
 
-
-def display_multi_company_metrics_enhanced(validation: dict, companies_found: set, company_preference: str, route_info: dict, is_route_query: bool):
-    """Muestra métricas mejoradas con información de ruta"""
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        completeness = validation.get('completeness', 0)
-        if completeness >= 0.8:
-            st.success(f"✅ **Completitud** ({completeness:.0%})")
-        elif completeness >= 0.5:
-            st.warning(f"⚠️ **Completitud** ({completeness:.0%})")
-        else:
-            st.error(f"❌ **Completitud** ({completeness:.0%})")
-    
-    with col2:
-        if is_route_query:
-            if route_info.get('has_route'):
-                origin = route_info.get('origin_cleaned', 'N/A')
-                destination = route_info.get('destination_cleaned', 'N/A')
-                st.success(f"🎯 **Ruta:** {origin} → {destination}")
-            else:
-                st.info("🔍 **Consulta de ruta detectada**")
-        else:
-            if len(companies_found) > 1:
-                st.success(f"🔄 **Multi-Empresa** ({len(companies_found)} empresas)")
-            elif len(companies_found) == 1:
-                company = list(companies_found)[0]
-                st.info(f"🏢 **{company}** (1 empresa)")
-            else:
-                st.warning("⚠️ **Sin Empresas** detectadas")
-    
-    with col3:
-        if company_preference == 'ALL':
-            if is_route_query:
-                st.info("🌍 **Comparando:** Todas las opciones")
-            else:
-                st.info("🌍 **Consulta:** Todas las empresas")
-        else:
-            st.info(f"🎯 **Específica:** {company_preference}")
-    
-    # Mostrar advertencias específicas
-    if validation.get('warnings'):
-        with st.expander("⚠️ **Advertencias**"):
-            for warning in validation['warnings']:
-                st.write(f"• {warning}")
-    
-    # Mostrar sugerencias
-    if validation.get('suggestions'):
-        with st.expander("💡 **Sugerencias**"):
-            for suggestion in validation['suggestions']:
-                st.write(f"• {suggestion}")
-
-def display_lcl_metrics(validation: dict, query_type: str, route_info: dict):
-    """Muestra métricas específicas para LCL"""
+def display_msl_metrics(validation: dict, query_type: str, route_info: dict):
+    """Muestra métricas específicas para MSL"""
     
     col1, col2, col3 = st.columns(3)
     
@@ -263,7 +134,7 @@ def display_lcl_metrics(validation: dict, query_type: str, route_info: dict):
     
     # Mostrar advertencias
     if validation.get('warnings'):
-        with st.expander("⚠️ **Advertencias LCL**"):
+        with st.expander("⚠️ **Advertencias MSL**"):
             for warning in validation['warnings']:
                 st.write(f"• {warning}")
     
@@ -273,14 +144,14 @@ def display_lcl_metrics(validation: dict, query_type: str, route_info: dict):
             for suggestion in validation['suggestions']:
                 st.write(f"• {suggestion}")
 
-def analyze_and_display_lcl_sources(sources: list):
-    """Analiza y muestra fuentes LCL"""
+def analyze_and_display_msl_sources(sources: list):
+    """Analiza y muestra fuentes MSL"""
     
     if not sources:
-        st.error("No se encontraron fuentes")
+        st.error("No se encontraron fuentes MSL")
         return
     
-    analysis = analyze_lcl_sources(sources)
+    analysis = analyze_msl_sources(sources)
     
     col1, col2, col3 = st.columns(3)
     
@@ -301,19 +172,19 @@ def analyze_and_display_lcl_sources(sources: list):
         for country, count in sorted_countries:
             st.write(f"🏳️ {country}: {count}")
 
-def enhanced_sidebar_lcl():
-    """Interfaz lateral especializada para LCL"""
+def enhanced_sidebar_msl():
+    """Interfaz lateral especializada para MSL"""
     with st.sidebar:
-        st.markdown("### 🚀 **Sistema LCL Marítimo**")
+        st.markdown("### 🚀 **Sistema MSL LCL Marítimo**")
         st.success("""
-        ✅ Procesamiento Multi-Empresa (MSL + PLUSCARGO)
-        ✅ Detección automática de empresa por archivo
-        ✅ Comparación entre empresas disponibles
-        ✅ Estructura específica MSL vs PLUSCARGO
-        ✅ Información completa de costos por empresa
+        ✅ Procesamiento especializado MSL
+        ✅ Estructura específica del tarifario MSL
+        ✅ Destino implícito: Chile (San Antonio/Valparaíso)
+        ✅ Información completa de costos MSL
         ✅ Tiempos de tránsito y frecuencias
         ✅ Agentes locales por puerto
-        ✅ Costos adicionales detallados por empresa
+        ✅ Costos adicionales detallados (DDT, VGM)
+        ✅ 4 regiones: AMERICA, EUROPA, NORTEAMERICA, ASIA
         """)
         
         st.markdown("---")
@@ -325,35 +196,35 @@ def enhanced_sidebar_lcl():
             st.error("❌ API Key no encontrada")
             return
 
-    # Tabs para LCL
-    tab1, tab2, tab3, tab4 = st.tabs(["📤 Crear LCL", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
+    # Tabs para MSL
+    tab1, tab2, tab3, tab4 = st.tabs(["📤 Crear MSL", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
 
     with tab1:
-        st.markdown("### 📤 Crear Base de Datos LCL")
+        st.markdown("### 📤 Crear Base de Datos MSL")
         
         st.session_state.uploaded_file_list = st.file_uploader(
-            "Selecciona archivo Excel de tarifas LCL:",
+            "Selecciona archivo Excel MSL:",
             accept_multiple_files=True,
             type=["xlsx", "xls"],
-            help="El sistema procesará automáticamente las hojas regionales (AMERICA, EUROPA, NORTEAMERICA, ASIA)"
+            help="El sistema procesará automáticamente las hojas MSL (AMERICA, EUROPA, NORTEAMERICA, ASIA)"
         )
         
         st.session_state.vector_store_name = st.text_input(
-            "📊 Nombre Base de Datos LCL:",
-            placeholder="ej: seemann_lcl_2025",
-            help="Nombre identificativo para la base de datos LCL"
+            "📊 Nombre Base de Datos MSL:",
+            placeholder="ej: msl_lcl_2025",
+            help="Nombre identificativo para la base de datos MSL"
         )
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            if st.button("🚀 Crear Sistema LCL", type="primary"):
-                create_lcl_rag_system()
+            if st.button("🚀 Crear Sistema MSL", type="primary"):
+                create_msl_rag_system()
         with col2:
             if st.button("🗑️ Limpiar"):
                 delete_temp_files()
 
     with tab2:
-        st.markdown("### 📂 Cargar Base de Datos LCL")
+        st.markdown("### 📂 Cargar Base de Datos MSL")
         
         available_stores = [
             f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() 
@@ -362,17 +233,17 @@ def enhanced_sidebar_lcl():
         
         if available_stores:
             st.session_state.selected_vectorstore_name = st.selectbox(
-                "🗂️ Bases LCL disponibles:",
+                "🗂️ Bases MSL disponibles:",
                 options=[""] + available_stores
             )
         else:
-            st.info("📁 No hay bases de datos LCL disponibles")
+            st.info("📁 No hay bases de datos MSL disponibles")
         
-        if st.button("📖 Cargar Base de Datos LCL", type="primary"):
-            load_existing_lcl_vectorstore()
+        if st.button("📖 Cargar Base de Datos MSL", type="primary"):
+            load_existing_msl_vectorstore()
 
     with tab3:
-        st.markdown("### 📊 Estadísticas del Sistema LCL")
+        st.markdown("### 📊 Estadísticas del Sistema MSL")
         
         if hasattr(st.session_state, 'vector_store'):
             try:
@@ -380,36 +251,36 @@ def enhanced_sidebar_lcl():
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("📄 Total Registros LCL", collection_count)
+                    st.metric("📄 Total Registros MSL", collection_count)
                 with col2:
                     st.metric("🤖 Modelo", st.session_state.get('selected_model', 'gpt-4o'))
                 with col3:
                     st.metric("🌡️ Temperatura", f"{st.session_state.get('temperature', 0.05)}")
                     
-                st.markdown("#### 📈 Estadísticas LCL")
-                st.info("Sistema especializado en tarifas LCL marítimas activo")
+                st.markdown("#### 📈 Estadísticas MSL")
+                st.info("Sistema especializado en tarifas LCL marítimas MSL activo")
             except:
                 st.info("Carga una base de datos para ver estadísticas")
         else:
-            st.info("No hay base de datos LCL cargada")
+            st.info("No hay base de datos MSL cargada")
 
     with tab4:
-        st.markdown("### 🧪 Test Sistema LCL")
-        if st.button("Ejecutar Test LCL"):
-            test_lcl_system()
+        st.markdown("### 🧪 Test Sistema MSL")
+        if st.button("Ejecutar Test MSL"):
+            test_msl_system()
 
-def create_lcl_rag_system():
-    """Pipeline de creación del sistema LCL"""
+def create_msl_rag_system():
+    """Pipeline de creación del sistema MSL"""
     
     if not OPENAI_API_KEY:
         st.error("❌ Configura OpenAI API key")
         return
 
     if not st.session_state.uploaded_file_list or not st.session_state.vector_store_name.strip():
-        st.error("❌ Selecciona archivo Excel y nombre de base de datos")
+        st.error("❌ Selecciona archivo Excel MSL y nombre de base de datos")
         return
     
-    with st.spinner("📄 Procesando Excel LCL..."):
+    with st.spinner("📄 Procesando Excel MSL..."):
         try:
             # Limpiar y guardar archivos
             delete_temp_files()
@@ -417,26 +288,26 @@ def create_lcl_rag_system():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            status_text.text("📤 Guardando archivos Excel...")
+            status_text.text("📤 Guardando archivos Excel MSL...")
             for i, uploaded_file in enumerate(st.session_state.uploaded_file_list):
                 temp_file_path = TMP_DIR / uploaded_file.name
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.read())
                 progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.2)
             
-            # Procesar con sistema LCL
-            status_text.text("🧠 Procesando tarifas LCL...")
-            documents = load_lcl_excel_documents()
+            # Procesar con sistema MSL
+            status_text.text("🧠 Procesando tarifas MSL...")
+            documents = load_msl_excel_documents()
             progress_bar.progress(0.4)
             
             if not documents:
-                st.error("❌ No se procesaron documentos LCL")
+                st.error("❌ No se procesaron documentos MSL")
                 return
             
-            # Estadísticas de procesamiento
-            analysis = analyze_lcl_sources(documents)
+            # Estadísticas de procesamiento MSL
+            analysis = analyze_msl_sources(documents)
             
-            st.success("📊 **Procesamiento LCL completado:**")
+            st.success("📊 **Procesamiento MSL completado:**")
             cols = st.columns(4)
             with cols[0]:
                 st.metric("📄 Total Registros", analysis['total'])
@@ -447,25 +318,25 @@ def create_lcl_rag_system():
             with cols[3]:
                 st.metric("🏳️ Países", len(analysis['countries']))
             
-            # Crear chunks optimizados para LCL
-            status_text.text("✂️ Creando chunks LCL...")
+            # Crear chunks optimizados para MSL
+            status_text.text("✂️ Creando chunks MSL...")
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1500,
                 chunk_overlap=150,
                 separators=[
-                    "\nTARIFA LCL MARÍTIMA",
-                    "\n=== INFORMACIÓN DE RUTA ===",
-                    "\n=== TARIFAS Y COSTOS ===",
+                    "\nTARIFA LCL MARÍTIMA - MSL",
+                    "\n=== INFORMACIÓN DE RUTA MSL ===",
+                    "\n=== TARIFAS MSL ===",
                     "\n\n", "\n", " ", ""
                 ]
             )
             chunks = text_splitter.split_documents(documents)
             progress_bar.progress(0.6)
             
-            st.info(f"📁 {len(chunks)} chunks LCL creados")
+            st.info(f"📝 {len(chunks)} chunks MSL creados")
             
-            # Crear vectorstore LCL
-            status_text.text("🧠 Generando embeddings LCL...")
+            # Crear vectorstore MSL
+            status_text.text("🧠 Generando embeddings MSL...")
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
@@ -475,17 +346,17 @@ def create_lcl_rag_system():
                 documents=chunks,
                 embedding=embeddings,
                 persist_directory=persist_path.as_posix(),
-                collection_name="seemann_lcl_maritime"
+                collection_name="msl_lcl_maritime"
             )
             progress_bar.progress(0.8)
             
-            # Crear chain LCL
-            status_text.text("🔗 Configurando sistema conversacional LCL...")
-            st.session_state.retriever = create_lcl_retriever(
+            # Crear chain MSL
+            status_text.text("🔗 Configurando sistema conversacional MSL...")
+            st.session_state.retriever = create_msl_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_lcl_conversational_chain(
+            st.session_state.chain, st.session_state.memory = create_msl_conversational_chain(
                 retriever=st.session_state.retriever
             )
             
@@ -495,7 +366,7 @@ def create_lcl_rag_system():
             status_text.empty()
             progress_bar.empty()
             
-            st.success("✅ **Sistema LCL creado exitosamente!**")
+            st.success("✅ **Sistema MSL creado exitosamente!**")
             st.balloons()
             
         except Exception as e:
@@ -503,8 +374,8 @@ def create_lcl_rag_system():
             with st.expander("🔧 Detalles del error"):
                 st.code(traceback.format_exc())
 
-def load_existing_lcl_vectorstore():
-    """Cargar vectorstore LCL existente"""
+def load_existing_msl_vectorstore():
+    """Cargar vectorstore MSL existente"""
     if not OPENAI_API_KEY or not st.session_state.selected_vectorstore_name:
         st.error("❌ Configura API key y selecciona base de datos")
         return
@@ -512,54 +383,54 @@ def load_existing_lcl_vectorstore():
     vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
     
     if not vectorstore_path.exists():
-        st.error("❌ Base de datos LCL no existe")
+        st.error("❌ Base de datos MSL no existe")
         return
 
-    with st.spinner("📖 Cargando sistema LCL..."):
+    with st.spinner("📖 Cargando sistema MSL..."):
         try:
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             st.session_state.vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=vectorstore_path.as_posix(),
-                collection_name="seemann_lcl_maritime"
+                collection_name="msl_lcl_maritime"
             )
             
             collection_count = st.session_state.vector_store._collection.count()
             if collection_count == 0:
-                st.warning("⚠️ Base de datos LCL vacía")
+                st.warning("⚠️ Base de datos MSL vacía")
                 return
             
-            st.session_state.retriever = create_lcl_retriever(
+            st.session_state.retriever = create_msl_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_lcl_conversational_chain(
+            st.session_state.chain, st.session_state.memory = create_msl_conversational_chain(
                 retriever=st.session_state.retriever
             )
             
             clear_chat_history()
             
-            st.success("✅ **Sistema LCL cargado exitosamente!**")
-            st.info(f"📊 {collection_count} registros LCL indexados")
+            st.success("✅ **Sistema MSL cargado exitosamente!**")
+            st.info(f"📊 {collection_count} registros MSL indexados")
             
         except Exception as e:
             st.error(f"❌ Error cargando: {str(e)}")
 
-def lcl_chatbot():
-    """Chatbot principal LCL"""
-    enhanced_sidebar_lcl()
+def msl_chatbot():
+    """Chatbot principal MSL"""
+    enhanced_sidebar_msl()
     
     st.markdown("---")
     
-    # Header LCL
+    # Header MSL
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor LCL Marítimo - Seemann Group")
+        st.subheader("💬 Consultor LCL Marítimo - MSL (Seemann Group)")
         if hasattr(st.session_state, 'chain'):
-            st.success("🟢 Sistema LCL Activo")
+            st.success("🟢 Sistema MSL Activo")
         else:
-            st.warning("🟡 Crear/Cargar Base de Datos LCL")
+            st.warning("🟡 Crear/Cargar Base de Datos MSL")
 
     # Mensajes
     if "messages" not in st.session_state:
@@ -570,18 +441,18 @@ def lcl_chatbot():
             st.write(msg["content"])
 
     # Input principal
-    if prompt := st.chat_input("Consulta tarifas LCL... (ej: ¿Cuánto cuesta desde Shanghai a Chile?)"):
+    if prompt := st.chat_input("Consulta tarifas MSL... (ej: ¿Cuánto cuesta desde Shanghai a Chile?)"):
         
         if not OPENAI_API_KEY:
             st.error("🔑 Configura OpenAI API key")
             st.stop()
         
         if not hasattr(st.session_state, 'chain'):
-            st.warning("⚠️ Crea o carga base de datos LCL")
+            st.warning("⚠️ Crea o carga base de datos MSL")
             st.stop()
         
-        # Ejecutar respuesta LCL
-        get_lcl_response(prompt)
+        # Ejecutar respuesta MSL
+        get_msl_response(prompt)
 
 def delete_temp_files():
     """Limpiar archivos temporales"""
@@ -605,25 +476,23 @@ def clear_chat_history():
         except:
             pass
 
-def test_lcl_system():
-    """Test funcionalidad LCL"""
-    st.markdown("### 🧪 Test Sistema LCL")
+def test_msl_system():
+    """Test funcionalidad MSL"""
+    st.markdown("### 🧪 Test Sistema MSL")
     
-    from config import extract_ports_from_query, normalize_port_name, detect_lcl_query_type
-    
-    # Test casos LCL
+    # Test casos MSL
     test_cases = [
-        "¿Cuánto cuesta desde Shanghai a San Antonio?",
+        "¿Cuánto cuesta desde Shanghai a Chile?",
         "Necesito tarifa desde Buenos Aires",
-        "¿Qué opciones tengo desde Europa?",
+        "¿Qué opciones MSL tengo desde Europa?",
         "Tiempo de tránsito desde Antwerp"
     ]
     
     for i, test_query in enumerate(test_cases, 1):
         st.write(f"**Test {i}:** {test_query}")
         
-        # Test detección
-        query_type = detect_lcl_query_type(test_query)
+        # Test detección MSL
+        query_type = detect_msl_query_type(test_query)
         route_info = extract_ports_from_query(test_query)
         
         col1, col2 = st.columns(2)
@@ -631,107 +500,31 @@ def test_lcl_system():
             st.write(f"   **Tipo:** {query_type}")
         with col2:
             if route_info.get('has_route'):
-                st.write(f"   **Ruta:** {route_info.get('origin_raw', '')} → {route_info.get('destination_raw', '')}")
+                st.write(f"   **Ruta:** {route_info.get('origin_raw', '')} → Chile")
             else:
                 st.write("   **Ruta:** No específica")
     
-    st.success("✅ Test LCL completado")
+    st.success("✅ Test MSL completado")
 
-def display_multi_company_metrics(validation: dict, companies_found: set, company_preference: str):
-    """Muestra métricas específicas multi-empresa"""
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        completeness = validation.get('completeness', 0)
-        if completeness >= 0.8:
-            st.success(f"✅ **Completitud** ({completeness:.0%})")
-        elif completeness >= 0.5:
-            st.warning(f"⚠️ **Completitud** ({completeness:.0%})")
-        else:
-            st.error(f"❌ **Completitud** ({completeness:.0%})")
-    
-    with col2:
-        if len(companies_found) > 1:
-            st.success(f"🔄 **Multi-Empresa** ({len(companies_found)} empresas)")
-        elif len(companies_found) == 1:
-            company = list(companies_found)[0]
-            st.info(f"🏢 **{company}** (1 empresa)")
-        else:
-            st.warning("❓ **Sin Empresas** detectadas")
-    
-    with col3:
-        if company_preference == 'ALL':
-            st.info("🌐 **Consulta:** Todas las empresas")
-        else:
-            st.info(f"🎯 **Consulta:** Solo {company_preference}")
-    
-    # Mostrar advertencias específicas multi-empresa
-    if validation.get('warnings'):
-        with st.expander("⚠️ **Advertencias Multi-Empresa**"):
-            for warning in validation['warnings']:
-                st.write(f"• {warning}")
-
-def analyze_and_display_multi_company_sources(sources: list):
-    """Analiza y muestra fuentes por empresa"""
-    
-    if not sources:
-        st.error("No se encontraron fuentes")
-        return
-    
-    # Análisis por empresa
-    by_company = {}
-    by_route = {}
-    
-    for doc in sources:
-        company = doc.metadata.get('company', 'UNKNOWN')
-        by_company[company] = by_company.get(company, 0) + 1
-        
-        # Analizar rutas por empresa
-        puerto_origen = doc.metadata.get('puerto_origen', '')
-        puerto_destino = doc.metadata.get('puerto_destino', 'Chile')
-        
-        if company not in by_route:
-            by_route[company] = set()
-        
-        if puerto_origen:
-            by_route[company].add(f"{puerto_origen} → {puerto_destino}")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**📊 Por Empresa:**")
-        for company, count in by_company.items():
-            icon = "🏢" if company in ['MSL', 'PLUSCARGO'] else "❓"
-            st.write(f"{icon} {company}: {count} documentos")
-    
-    with col2:
-        st.write("**🛣️ Rutas por Empresa:**")
-        for company, routes in by_route.items():
-            if routes:
-                st.write(f"**{company}:**")
-                for route in list(routes)[:3]:  # Primeras 3 rutas
-                    st.write(f"  • {route}")
-                    
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
 
 def main():
-    """Función principal de la aplicación LCL"""
+    """Función principal de la aplicación MSL"""
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
         st.session_state.selected_model = "gpt-4o"
         st.session_state.temperature = 0.05
     
-    # Ejecutar sistema LCL
-    lcl_chatbot()
+    # Ejecutar sistema MSL
+    msl_chatbot()
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-    🚢 Seemann Group - Sistema LCL Marítimo | Especializado en Tarifas Less than Container Load | Powered by LangChain & OpenAI
+    🚢 MSL (Seemann Group) - Sistema LCL Marítimo | Especializado en Tarifas Less than Container Load | Powered by LangChain & OpenAI
     </div>
     """, unsafe_allow_html=True)
 
