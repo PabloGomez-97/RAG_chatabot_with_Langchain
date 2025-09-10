@@ -7,18 +7,19 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
-# Importar módulos MSL con verificación
+# Importar módulos de FCL marítimo
 from config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
-    TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_msl_query_type,
-    extract_port_for_verification
+    TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_maritime_fcl_query_type,
+    extract_ports_from_query, get_port_region, analyze_maritime_route_direction,
+    extract_container_type_from_query
 )
 from core import (
-    load_msl_documents_with_verification,
-    create_msl_verified_chain,
-    create_msl_verified_retriever,
-    validate_msl_route_exists,
-    analyze_msl_verified_sources
+    load_maritime_fcl_documents,
+    create_maritime_fcl_chain,
+    create_maritime_fcl_retriever,
+    validate_maritime_fcl_route,
+    analyze_maritime_fcl_sources
 )
 
 ####################################################################
@@ -26,69 +27,68 @@ from core import (
 ####################################################################
 
 st.set_page_config(
-    page_title="MSL - Verificación Total",
-    page_icon="✅",
+    page_title="FCL Marítimo - Sistema de Consultas",
+    page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("✅ MSL (Seemann Group) - Sistema con Verificación Total")  
-st.markdown("*Solo información que realmente existe en el tarifario MSL*")
+st.title("🚢 FCL MARÍTIMO - Sistema de Consulta de Tarifas de Contenedores")  
+st.markdown("*Consulta tarifas de contenedores FCL entre puertos POL → POD*")
 
 ####################################################################
-#            FUNCIONES PRINCIPALES CON VERIFICACIÓN
+#            FUNCIONES PRINCIPALES
 ####################################################################
 
-def get_msl_verified_response(prompt):
-    """Función principal con verificación estricta y captura de múltiples opciones"""
+def get_maritime_fcl_response(prompt):
+    """Función principal para respuestas de FCL marítimo"""
     try:
-        with st.spinner("🔍 Buscando TODAS las opciones disponibles en MSL..."):
+        with st.spinner("🔍 Buscando tarifas de contenedores FCL..."):
             
-            # PASO 1: Verificar que existe información para la consulta
+            # Verificar que existe base de datos
             if not hasattr(st.session_state, 'vector_store'):
                 st.error("❌ No hay base de datos cargada")
                 return
             
-            # PASO 2: Buscar TODOS los documentos relevantes (sin filtros restrictivos)
+            # Buscar documentos relevantes
             retriever = st.session_state.retriever
             docs = retriever.get_relevant_documents(prompt)
             
-            # PASO 3: Analizar cuántas opciones diferentes hay para el mismo puerto
-            port_info = extract_port_for_verification(prompt)
-            port_options_analysis = analyze_port_options(docs, port_info.get('port_requested', ''))
+            # Analizar la consulta para detectar puertos y rutas
+            port_info = extract_ports_from_query(prompt)
+            query_type = detect_maritime_fcl_query_type(prompt)
+            container_type = extract_container_type_from_query(prompt)
             
-            # PASO 4: Validar existencia y mostrar análisis detallado
-            validation = validate_msl_route_exists(prompt, docs)
+            # Validar ruta y mostrar análisis
+            validation = validate_maritime_fcl_route(prompt, docs)
             
-            with st.expander("🔍 **Análisis de Opciones Múltiples**", expanded=False):
+            with st.expander("🔍 **Análisis de Consulta**", expanded=False):
                 col1, col2 = st.columns(2)
                 
                 with col1:
+                    st.write(f"**Tipo de consulta:** {query_type}")
                     st.write(f"**Estado:** {validation['verification_status']}")
-                    if validation['route_requested']:
-                        st.write(f"**Puerto solicitado:** {validation['route_requested']}")
-                    st.write(f"**Documentos encontrados:** {len(docs)}")
+                    if port_info['pol_detected'] and port_info['pod_detected']:
+                        st.write(f"**Ruta detectada:** {port_info['pol_detected']} → {port_info['pod_detected']}")
+                    elif port_info['ports_found']:
+                        st.write(f"**Puertos detectados:** {', '.join(port_info['ports_found'])}")
+                    if container_type != 'All':
+                        st.write(f"**Contenedor específico:** {container_type}")
                 
                 with col2:
-                    if port_options_analysis['multiple_options']:
-                        st.success(f"✅ **{port_options_analysis['options_count']} opciones diferentes encontradas**")
-                        for i, option in enumerate(port_options_analysis['options_summary'], 1):
-                            st.write(f"  {i}. {option}")
+                    st.write(f"**Documentos encontrados:** {len(docs)}")
+                    if validation['route_exists']:
+                        st.success("✅ Ruta encontrada en tarifario")
+                    elif validation['suggestions']:
+                        st.info(f"💡 {len(validation['suggestions'])} rutas similares")
                     else:
-                        st.info("ℹ️ Una opción encontrada")
+                        st.warning("⚠️ Ruta no encontrada")
             
-            # PASO 5: Ejecutar chain con énfasis en mostrar TODAS las opciones
+            # Ejecutar chain
             response = st.session_state.chain.invoke({"question": prompt})
             answer = response["answer"]
             
-            # PASO 6: Validar que se mostraron todas las opciones
-            if port_options_analysis['multiple_options'] and port_options_analysis['options_count'] > 1:
-                option_count_in_response = answer.count("OPCIÓN")
-                if option_count_in_response < port_options_analysis['options_count']:
-                    warning_msg = f"\n\n⚠️ **ADVERTENCIA:** Se detectaron {port_options_analysis['options_count']} opciones pero solo se mostraron {option_count_in_response}. Verificando..."
-                    answer += warning_msg
-            
-            # PASO 7: Mostrar respuesta
+            # Agregar mensajes al historial
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
@@ -97,220 +97,146 @@ def get_msl_verified_response(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Métricas de múltiples opciones
-                display_multiple_options_metrics(validation, port_options_analysis, response.get("source_documents", []))
+                # Mostrar métricas y análisis
+                display_maritime_fcl_metrics(validation, port_info, response.get("source_documents", []), container_type)
                 
-                # Análisis detallado de todas las opciones
-                with st.expander("📋 **Análisis Detallado de Todas las Opciones**"):
-                    display_all_options_analysis(response.get("source_documents", []), port_info.get('port_requested', ''))
+                # Análisis detallado de fuentes
+                with st.expander("📋 **Análisis Detallado de Rutas FCL**"):
+                    display_fcl_route_analysis(response.get("source_documents", []), port_info)
                 
     except Exception as e:
-        st.error(f"Error en sistema de múltiples opciones: {str(e)}")
+        st.error(f"Error en consulta de FCL marítimo: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
 
-def analyze_port_options(docs: list, requested_port: str) -> dict:
-    """Analiza cuántas opciones diferentes hay para un puerto específico"""
-    
-    analysis = {
-        'multiple_options': False,
-        'options_count': 0,
-        'options_summary': [],
-        'same_port_docs': []
-    }
-    
-    if not requested_port:
-        return analysis
-    
-    requested_port_clean = requested_port.lower().strip()
-    
-    # Buscar documentos del mismo puerto
-    for doc in docs:
-        puerto_origen = doc.metadata.get('puerto_origen', '').lower()
-        
-        if requested_port_clean in puerto_origen or puerto_origen in requested_port_clean:
-            analysis['same_port_docs'].append(doc)
-            
-            # Crear resumen de la opción
-            tarifa = doc.metadata.get('tarifa', 'No disponible')
-            servicio = doc.metadata.get('tipo_servicio', 'No especificado')
-            row = doc.metadata.get('row_number', 'N/A')
-            
-            option_summary = f"Fila {row}: {tarifa} - {servicio}"
-            analysis['options_summary'].append(option_summary)
-    
-    analysis['options_count'] = len(analysis['same_port_docs'])
-    analysis['multiple_options'] = analysis['options_count'] > 1
-    
-    return analysis
-
-def display_multiple_options_metrics(validation: dict, options_analysis: dict, source_docs: list):
-    """Muestra métricas específicas para múltiples opciones"""
+def display_maritime_fcl_metrics(validation: dict, port_info: dict, source_docs: list, container_type: str):
+    """Muestra métricas específicas de FCL marítimo"""
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
         if validation['route_exists']:
-            st.success("✅ **Ruta Verificada**")
-        elif validation['route_requested']:
-            st.error("❌ **Ruta No Existe**")
+            st.success("✅ **Ruta Disponible**")
         else:
-            st.info("ℹ️ **Consulta General**")
+            st.error("❌ **Ruta No Encontrada**")
     
     with col2:
-        if options_analysis['multiple_options']:
-            st.success(f"🔄 **{options_analysis['options_count']} Opciones Diferentes**")
-        else:
-            st.info("1️⃣ **Opción Única**")
+        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
+        st.info(f"📄 **{verified_docs} Rutas Verificadas**")
     
     with col3:
-        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
-        if verified_docs > 0:
-            st.success(f"📄 **{verified_docs} Docs Verificados**")
+        if port_info['has_route_pattern']:
+            operation = analyze_maritime_route_direction(port_info['pol_detected'], port_info['pod_detected'])
+            st.info(f"🌍 **{operation.split(' hacia ')[0] if ' hacia ' in operation else operation}**")
         else:
-            st.warning("⚠️ **Sin Docs Verificados**")
+            st.info("🔍 **Consulta General**")
     
-    # Mostrar detalles de múltiples opciones
-    if options_analysis['multiple_options']:
-        with st.expander("🔄 **Detalles de Múltiples Opciones**"):
-            st.write(f"**Puerto:** {validation.get('route_requested', 'N/A')}")
-            st.write(f"**Total opciones encontradas:** {options_analysis['options_count']}")
-            for i, option in enumerate(options_analysis['options_summary'], 1):
-                st.write(f"  **{i}.** {option}")
+    # Mostrar información de contenedores
+    if container_type != 'All':
+        st.info(f"📦 **Contenedor específico: {container_type}**")
+    
+    # Mostrar sugerencias si las hay
+    if validation.get('suggestions'):
+        with st.expander("💡 **Rutas Alternativas Disponibles**"):
+            for suggestion in validation['suggestions'][:5]:
+                pol, pod = suggestion.split('_')
+                operation = analyze_maritime_route_direction(pol, pod)
+                st.write(f"🚢 **{pol} → {pod}** ({operation})")
 
-def display_all_options_analysis(sources: list, requested_port: str):
-    """Muestra análisis detallado de todas las opciones del puerto"""
+def display_fcl_route_analysis(sources: list, port_info: dict):
+    """Muestra análisis detallado de rutas FCL encontradas"""
     
     if not sources:
         st.warning("⚠️ No se encontraron fuentes")
         return
     
-    # Filtrar documentos del puerto solicitado
-    port_docs = []
-    if requested_port:
-        requested_clean = requested_port.lower().strip()
+    # Filtrar documentos relevantes
+    relevant_docs = []
+    if port_info.get('has_route_pattern'):
+        # Buscar ruta específica
+        pol_target = port_info['pol_detected']
+        pod_target = port_info['pod_detected']
+        
         for doc in sources:
-            puerto_origen = doc.metadata.get('puerto_origen', '').lower()
-            if requested_clean in puerto_origen or puerto_origen in requested_clean:
-                port_docs.append(doc)
+            if (doc.metadata.get('pol') == pol_target and 
+                doc.metadata.get('pod') == pod_target):
+                relevant_docs.append(doc)
     
-    if port_docs:
-        st.write(f"**🔍 Análisis detallado para: {requested_port}**")
-        
-        for i, doc in enumerate(port_docs, 1):
-            with st.expander(f"**Opción {i} - Fila {doc.metadata.get('row_number', 'N/A')}**"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write(f"**Puerto:** {doc.metadata.get('puerto_origen', 'N/A')}")
-                    st.write(f"**País:** {doc.metadata.get('pais_origen', 'N/A')}")
-                    st.write(f"**Company:** {doc.metadata.get('company', 'N/A')}")
-                    st.write(f"**Fila Excel:** {doc.metadata.get('row_number', 'N/A')}")
-                    st.write(f"**Hoja:** {doc.metadata.get('sheet_name', 'N/A')}")
-                
-                with col2:
-                    st.write(f"**Estado:** {doc.metadata.get('verification_status', 'N/A')}")
-                    st.write(f"**Tipo contenido:** {doc.metadata.get('content_type', 'N/A')}")
-                    # Mostrar tarifa si está disponible en metadata
-                    if 'tarifa' in doc.metadata:
-                        st.write(f"**Tarifa:** {doc.metadata.get('tarifa', 'N/A')}")
-                    if 'servicio' in doc.metadata:
-                        st.write(f"**Servicio:** {doc.metadata.get('servicio', 'N/A')}")
+    elif port_info.get('ports_found'):
+        # Buscar documentos que contengan alguno de los puertos
+        for doc in sources:
+            pol = doc.metadata.get('pol', '')
+            pod = doc.metadata.get('pod', '')
+            
+            if any(port in [pol, pod] for port in port_info['ports_found']):
+                relevant_docs.append(doc)
     else:
-        # Mostrar análisis general
-        verified_sources = [doc for doc in sources if doc.metadata.get('verification_status') == 'VERIFIED']
-        analysis = analyze_msl_verified_sources(verified_sources)
+        relevant_docs = sources[:10]  # Mostrar primeros 10 si es consulta general
+    
+    if relevant_docs:
+        st.write(f"**🔍 Análisis de {len(relevant_docs)} rutas FCL relevantes:**")
+        st.markdown("---")
         
-        col1, col2 = st.columns(2)
+        for i, doc in enumerate(relevant_docs[:5], 1):  # Limitar a 5 para no saturar
+            st.markdown(f"**Ruta {i}: {doc.metadata.get('pol', 'N/A')} → {doc.metadata.get('pod', 'N/A')}**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write(f"**POL:** {doc.metadata.get('pol', 'N/A')}")
+                st.write(f"**POD:** {doc.metadata.get('pod', 'N/A')}")
+                st.write(f"**Carrier:** {doc.metadata.get('carrier', 'No especificado')}")
+                st.write(f"**Compañía:** {doc.metadata.get('company', 'N/A')}")
+                st.write(f"**Fila Excel:** {doc.metadata.get('row_number', 'N/A')}")
+            
+            with col2:
+                st.write(f"**20GP:** {doc.metadata.get('container_20gp', 'No disponible')}")
+                st.write(f"**40GP:** {doc.metadata.get('container_40gp', 'No disponible')}")
+                st.write(f"**40HQ:** {doc.metadata.get('container_40hq', 'No disponible')}")
+                st.write(f"**40NOR:** {doc.metadata.get('container_40nor', 'No disponible')}")
+                st.write(f"**Free time:** {doc.metadata.get('free_time', 'No especificado')}")
+            
+            if i < len(relevant_docs[:5]):  # No agregar línea después del último
+                st.markdown("---")
+    else:
+        # Mostrar análisis general de todas las fuentes
+        analysis = analyze_maritime_fcl_sources(sources)
+        
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.write("**Puertos en resultados:**")
-            for port in sorted(list(analysis.get('verified_ports', set())))[:5]:
-                st.write(f"⚓ {port}")
+            st.write("**Puertos POL disponibles:**")
+            for pol in sorted(list(analysis.get('pol_ports', set())))[:5]:
+                region = get_port_region(pol)
+                st.write(f"🚢 {pol} ({region})")
         
         with col2:
-            st.write("**Por región:**")
-            for region, count in analysis.get('regions', {}).items():
-                st.write(f"🌍 {region}: {count}")
+            st.write("**Puertos POD disponibles:**")
+            for pod in sorted(list(analysis.get('pod_ports', set())))[:5]:
+                region = get_port_region(pod)
+                st.write(f"🏢 {pod} ({region})")
+        
+        with col3:
+            st.write("**Por compañía:**")
+            for company in sorted(list(analysis.get('companies', set()))):
+                st.write(f"🏢 {company}")
             
-            # ← NUEVO: Mostrar companies si están disponibles
-            if 'companies' in analysis and analysis['companies']:
-                st.write("**Por Company:**")
-                for company, count in analysis['companies'].items():
-                    st.write(f"🏢 {company}: {count}")
+            if analysis.get('carriers'):
+                st.write("**Carriers disponibles:**")
+                for carrier in sorted(list(analysis.get('carriers', set())))[:3]:
+                    st.write(f"🚢 {carrier}")
 
-def display_verification_metrics(validation: dict, source_docs: list):
-    """Muestra métricas de verificación"""
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if validation['route_exists']:
-            st.success("✅ **Ruta Verificada**")
-        elif validation['route_requested']:
-            st.error("❌ **Ruta No Existe**")
-        else:
-            st.info("ℹ️ **Consulta General**")
-    
-    with col2:
-        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
-        if verified_docs > 0:
-            st.success(f"📄 **{verified_docs} Documentos Verificados**")
-        else:
-            st.warning("⚠️ **Sin Documentos Verificados**")
-    
-    with col3:
-        available_routes = len(set(validation.get('available_routes', [])))
-        st.info(f"🗺️ **{available_routes} Rutas Disponibles**")
-    
-    # Mostrar sugerencias si las hay
-    if validation.get('suggestions'):
-        with st.expander("💡 **Rutas Alternativas Verificadas**"):
-            for suggestion in validation['suggestions']:
-                st.write(f"• {suggestion}")
-
-def display_verified_sources_analysis(sources: list):
-    """Analiza y muestra solo fuentes verificadas"""
-    
-    verified_sources = [doc for doc in sources if doc.metadata.get('verification_status') == 'VERIFIED']
-    
-    if not verified_sources:
-        st.warning("⚠️ No se encontraron fuentes verificadas")
-        return
-    
-    analysis = analyze_msl_verified_sources(verified_sources)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.write("**Por Región Verificada:**")
-        for region, count in analysis['regions'].items():
-            st.write(f"✅ {region}: {count}")
-    
-    with col2:
-        st.write("**Puertos Verificados:**")
-        sorted_ports = sorted(list(analysis['verified_ports']))[:5]
-        for port in sorted_ports:
-            st.write(f"⚓ {port}")
-    
-    with col3:
-        st.write("**Países Verificados:**")
-        sorted_countries = sorted(list(analysis['verified_countries']))[:5]
-        for country in sorted_countries:
-            st.write(f"🌍 {country}")
-
-def enhanced_sidebar_verification():
-    """Interfaz lateral con verificación total"""
+def enhanced_sidebar_maritime_fcl():
+    """Interfaz lateral para FCL marítimo"""
     with st.sidebar:
-        st.markdown("### ✅ **Sistema MSL con Verificación Total**")
+        st.markdown("### 🚢 **Sistema FCL Marítimo**")
         st.success("""
-        ✅ Inspección celda por celda del Excel
-        ✅ Solo rutas que realmente existen
-        ✅ Verificación antes de cada respuesta
-        ✅ Sin información inventada
-        ✅ Advertencias cuando ruta no existe
-        ✅ Sugerencias de rutas alternativas verificadas
-        ✅ Validación estricta de datos
+        ✅ Consulta de tarifas FCL POL → POD
+        ✅ Información de carriers y servicios navieros
+        ✅ Tarifas por tipo de contenedor
+        ✅ Free time y condiciones especiales
+        ✅ Rutas de importación Asia → Sudamérica
+        ✅ Múltiples compañías navieras
         """)
         
         st.markdown("---")
@@ -321,35 +247,35 @@ def enhanced_sidebar_verification():
             st.error("❌ API Key no encontrada")
             return
 
-    # Tabs para verificación
-    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Crear con Verificación", "📂 Cargar", "📊 Estadísticas", "🧪 Test"])
+    # Tabs para gestión
+    tab1, tab2, tab3, tab4 = st.tabs(["📁 Crear Sistema", "📂 Cargar", "📊 Estadísticas", "🧪 Ejemplos"])
 
     with tab1:
-        st.markdown("### 🔍 Crear Base de Datos con Verificación Total")
+        st.markdown("### 📁 Crear Base de Datos FCL Marítimo")
         
         st.session_state.uploaded_file_list = st.file_uploader(
-            "Selecciona archivo Excel MSL para verificación:",
+            "Selecciona archivo Excel FCL:",
             accept_multiple_files=True,
             type=["xlsx", "xls"],
-            help="El sistema inspeccionará cada celda para verificar rutas reales"
+            help="Sube el archivo con las tarifas FCL marítimas"
         )
         
         st.session_state.vector_store_name = st.text_input(
-            "📊 Nombre Base de Datos Verificada:",
-            placeholder="ej: msl_verified_2025",
-            help="Base de datos con solo rutas verificadas"
+            "📊 Nombre Base de Datos:",
+            placeholder="ej: fcl_maritimo_2025",
+            help="Nombre para la base de datos de tarifas FCL"
         )
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            if st.button("🔍 Crear con Verificación Total", type="primary"):
-                create_msl_verified_system()
+            if st.button("📁 Crear Sistema FCL", type="primary"):
+                create_maritime_fcl_system()
         with col2:
             if st.button("🗑️ Limpiar"):
                 delete_temp_files()
 
     with tab2:
-        st.markdown("### 📂 Cargar Base de Datos Verificada")
+        st.markdown("### 📂 Cargar Base de Datos Existente")
         
         available_stores = [
             f.name for f in LOCAL_VECTOR_STORE_DIR.iterdir() 
@@ -358,17 +284,17 @@ def enhanced_sidebar_verification():
         
         if available_stores:
             st.session_state.selected_vectorstore_name = st.selectbox(
-                "🗂️ Bases verificadas disponibles:",
+                "🗂️ Bases de datos disponibles:",
                 options=[""] + available_stores
             )
         else:
-            st.info("📁 No hay bases de datos verificadas")
+            st.info("📁 No hay bases de datos disponibles")
         
-        if st.button("📖 Cargar Base Verificada", type="primary"):
-            load_existing_verified_vectorstore()
+        if st.button("📖 Cargar Base de Datos", type="primary"):
+            load_existing_maritime_fcl_vectorstore()
 
     with tab3:
-        st.markdown("### 📊 Estadísticas de Verificación")
+        st.markdown("### 📊 Estadísticas del Sistema")
         
         if hasattr(st.session_state, 'vector_store'):
             try:
@@ -376,26 +302,40 @@ def enhanced_sidebar_verification():
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("✅ Rutas Verificadas", collection_count)
+                    st.metric("🚢 Rutas FCL", collection_count)
                 with col2:
                     st.metric("🤖 Modelo", "gpt-4o")
                 with col3:
-                    st.metric("🎯 Temperatura", "0.0 (máxima precisión)")
+                    st.metric("🎯 Precisión", "Máxima")
                     
-                st.markdown("#### 📈 Estado de Verificación")
-                st.success("Sistema con verificación total activo")
+                st.markdown("#### 📈 Estado del Sistema")
+                st.success("Sistema FCL marítimo activo")
             except:
                 st.info("Carga una base de datos para ver estadísticas")
         else:
-            st.info("No hay base de datos verificada cargada")
+            st.info("No hay base de datos cargada")
 
     with tab4:
-        st.markdown("### 🧪 Test de Verificación")
-        if st.button("Ejecutar Test de Verificación"):
-            test_verification_system()
+        st.markdown("### 🧪 Ejemplos de Consultas")
+        
+        ejemplos = [
+            "¿Cuál es la tarifa de SHANGHAI a SAI/VAL?",
+            "¿Qué opciones hay desde China a Chile?",
+            "¿Cuánto cuesta un contenedor 40HQ desde NINGBO?",
+            "¿Qué carriers operan desde BASE PORTS a SAI/VAL?",
+            "Tarifas de contenedores desde Asia a Chile",
+            "¿Hay rutas directas desde SINGAPORE?",
+            "Comparar precios de contenedores 20GP vs 40HQ",
+            "¿Cuál es el free time desde SHANGHAI?"
+        ]
+        
+        st.write("**💡 Prueba estas consultas:**")
+        for ejemplo in ejemplos:
+            if st.button(f"📝 {ejemplo}", key=f"ejemplo_{hash(ejemplo)}"):
+                st.session_state.ejemplo_selected = ejemplo
 
-def create_msl_verified_system():
-    """Pipeline de creación con verificación total"""
+def create_maritime_fcl_system():
+    """Pipeline de creación del sistema FCL marítimo"""
     
     if not OPENAI_API_KEY:
         st.error("❌ Configura OpenAI API key")
@@ -405,7 +345,7 @@ def create_msl_verified_system():
         st.error("❌ Selecciona archivo Excel y nombre de base de datos")
         return
     
-    with st.spinner("🔍 Verificando Excel celda por celda..."):
+    with st.spinner("📁 Creando sistema FCL marítimo..."):
         try:
             # Limpiar y guardar archivos
             delete_temp_files()
@@ -413,60 +353,84 @@ def create_msl_verified_system():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            status_text.text("📤 Guardando archivos para verificación...")
+            status_text.text("📤 Guardando archivos...")
             for i, uploaded_file in enumerate(st.session_state.uploaded_file_list):
                 temp_file_path = TMP_DIR / uploaded_file.name
                 with open(temp_file_path, "wb") as temp_file:
                     temp_file.write(uploaded_file.read())
                 progress_bar.progress((i + 1) / len(st.session_state.uploaded_file_list) * 0.1)
             
-            # Verificación completa
-            status_text.text("🔍 Inspeccionando cada celda del Excel...")
-            documents = load_msl_documents_with_verification()
+            # Procesar documentos FCL marítimo
+            status_text.text("🚢 Procesando tarifas FCL marítimas...")
+            documents = load_maritime_fcl_documents()
             progress_bar.progress(0.5)
             
             if not documents:
-                st.error("❌ No se encontraron rutas verificadas")
+                st.error("❌ No se encontraron rutas válidas")
                 return
             
-            # Mostrar estadísticas de verificación
-            analysis = analyze_msl_verified_sources(documents)
+            # Mostrar estadísticas de procesamiento
+            analysis = analyze_maritime_fcl_sources(documents)
             
-            st.success("✅ **Verificación Completada:**")
+            st.success("✅ **Procesamiento Completado:**")
             cols = st.columns(4)
             with cols[0]:
-                st.metric("✅ Rutas Verificadas", analysis['total_verified'])
+                st.metric("🚢 Rutas Procesadas", analysis['total_routes'])
             with cols[1]:
-                st.metric("🌍 Regiones", len(analysis['regions']))
+                st.metric("🚢 Puertos POL", len(analysis['pol_ports']))
             with cols[2]:
-                st.metric("⚓ Puertos Verificados", len(analysis['verified_ports']))
+                st.metric("🏢 Puertos POD", len(analysis['pod_ports']))
             with cols[3]:
-                st.metric("🌎 Países Verificados", len(analysis['verified_countries']))
+                st.metric("🏢 Compañías", len(analysis['companies']))
             
-            # Mostrar puertos verificados
-            with st.expander("⚓ **Puertos Verificados Encontrados**"):
-                for port in sorted(analysis['verified_ports']):
-                    st.write(f"✅ {port}")
+            # Mostrar resumen de puertos
+            with st.expander("🚢 **Puertos Disponibles**"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**POL (Origen):**")
+                    for pol in sorted(analysis['pol_ports']):
+                        region = get_port_region(pol)
+                        st.write(f"🚢 {pol} ({region})")
+                
+                with col2:
+                    st.write("**POD (Destino):**")
+                    for pod in sorted(analysis['pod_ports']):
+                        region = get_port_region(pod)
+                        st.write(f"🏢 {pod} ({region})")
             
-            # Crear chunks con separadores específicos para verificación
-            status_text.text("📝 Creando chunks de rutas verificadas...")
+            # Mostrar tipos de contenedores disponibles
+            with st.expander("📦 **Contenedores Disponibles**"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Tipos de contenedor:**")
+                    for container_type, count in analysis['container_types'].items():
+                        if count > 0:
+                            st.write(f"📦 {container_type}: {count} rutas")
+                
+                with col2:
+                    st.write("**Carriers disponibles:**")
+                    for carrier in sorted(analysis['carriers'])[:5]:
+                        st.write(f"🚢 {carrier}")
+            
+            # Crear chunks
+            status_text.text("📄 Creando chunks de documentos...")
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1200,
                 chunk_overlap=100,
                 separators=[
-                    "\nTARIFA LCL MARÍTIMA MSL - RUTA VERIFICADA",
-                    "\n=== INFORMACIÓN VERIFICADA ===",
-                    "\n=== VERIFICACIÓN ===",
+                    "\nTARIFA FCL MARÍTIMO - RUTA VERIFICADA",
+                    "\n=== INFORMACIÓN DE RUTA ===",
+                    "\n=== TARIFAS POR CONTENEDOR ===",
                     "\n\n", "\n", " ", ""
                 ]
             )
             chunks = text_splitter.split_documents(documents)
             progress_bar.progress(0.7)
             
-            st.info(f"📝 {len(chunks)} chunks verificados creados")
+            st.info(f"📄 {len(chunks)} chunks creados")
             
-            # Crear vectorstore verificado
-            status_text.text("🧠 Indexando rutas verificadas...")
+            # Crear vectorstore
+            status_text.text("🧠 Indexando rutas FCL...")
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             persist_path = LOCAL_VECTOR_STORE_DIR / st.session_state.vector_store_name
@@ -476,17 +440,17 @@ def create_msl_verified_system():
                 documents=chunks,
                 embedding=embeddings,
                 persist_directory=persist_path.as_posix(),
-                collection_name="msl_verified_routes"
+                collection_name="maritime_fcl_routes"
             )
             progress_bar.progress(0.9)
             
-            # Crear chain verificado
-            status_text.text("🔗 Configurando sistema con verificación...")
-            st.session_state.retriever = create_msl_verified_retriever(
+            # Crear chain
+            status_text.text("🔗 Configurando sistema de consultas...")
+            st.session_state.retriever = create_maritime_fcl_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_msl_verified_chain(
+            st.session_state.chain, st.session_state.memory = create_maritime_fcl_chain(
                 retriever=st.session_state.retriever
             )
             
@@ -496,7 +460,7 @@ def create_msl_verified_system():
             status_text.empty()
             progress_bar.empty()
             
-            st.success("✅ **Sistema con Verificación Total creado exitosamente!**")
+            st.success("✅ **Sistema FCL Marítimo creado exitosamente!**")
             st.balloons()
             
         except Exception as e:
@@ -504,8 +468,8 @@ def create_msl_verified_system():
             with st.expander("🔧 Detalles del error"):
                 st.code(traceback.format_exc())
 
-def load_existing_verified_vectorstore():
-    """Cargar vectorstore verificado existente"""
+def load_existing_maritime_fcl_vectorstore():
+    """Cargar vectorstore existente de FCL marítimo"""
     if not OPENAI_API_KEY or not st.session_state.selected_vectorstore_name:
         st.error("❌ Configura API key y selecciona base de datos")
         return
@@ -513,56 +477,68 @@ def load_existing_verified_vectorstore():
     vectorstore_path = LOCAL_VECTOR_STORE_DIR / st.session_state.selected_vectorstore_name
     
     if not vectorstore_path.exists():
-        st.error("❌ Base de datos verificada no existe")
+        st.error("❌ Base de datos no existe")
         return
 
-    with st.spinner("📖 Cargando sistema verificado..."):
+    with st.spinner("📖 Cargando sistema FCL marítimo..."):
         try:
             embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-ada-002")
             
             st.session_state.vector_store = Chroma(
                 embedding_function=embeddings,
                 persist_directory=vectorstore_path.as_posix(),
-                collection_name="msl_verified_routes"
+                collection_name="maritime_fcl_routes"
             )
             
             collection_count = st.session_state.vector_store._collection.count()
             if collection_count == 0:
-                st.warning("⚠️ Base de datos verificada vacía")
+                st.warning("⚠️ Base de datos vacía")
                 return
             
-            st.session_state.retriever = create_msl_verified_retriever(
+            st.session_state.retriever = create_maritime_fcl_retriever(
                 vector_store=st.session_state.vector_store, k=15
             )
             
-            st.session_state.chain, st.session_state.memory = create_msl_verified_chain(
+            st.session_state.chain, st.session_state.memory = create_maritime_fcl_chain(
                 retriever=st.session_state.retriever
             )
             
             clear_chat_history()
             
-            st.success("✅ **Sistema verificado cargado exitosamente!**")
-            st.info(f"📊 {collection_count} rutas verificadas indexadas")
+            st.success("✅ **Sistema FCL marítimo cargado exitosamente!**")
+            st.info(f"📊 {collection_count} rutas indexadas")
             
         except Exception as e:
             st.error(f"❌ Error cargando: {str(e)}")
+            with st.expander("🔧 Detalles del error"):
+                st.code(traceback.format_exc())
 
-def msl_verified_chatbot():
-    """Chatbot principal con verificación"""
-    enhanced_sidebar_verification()
+def maritime_fcl_chatbot():
+    """Chatbot principal de FCL marítimo"""
+    enhanced_sidebar_maritime_fcl()
     
     st.markdown("---")
     
-    # Header con verificación
+    # Header del sistema
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor MSL con Verificación Total")
+        st.subheader("💬 Consultor de Tarifas FCL Marítimas")
         if hasattr(st.session_state, 'chain'):
-            st.success("✅ Sistema Verificado Activo")
+            st.success("✅ Sistema Activo")
         else:
-            st.warning("🔍 Crear/Cargar Sistema Verificado")
+            st.warning("📁 Crear/Cargar Sistema")
 
-    # Mensajes
+    # Manejo de ejemplos seleccionados
+    if hasattr(st.session_state, 'ejemplo_selected'):
+        prompt = st.session_state.ejemplo_selected
+        del st.session_state.ejemplo_selected
+        
+        if hasattr(st.session_state, 'chain'):
+            get_maritime_fcl_response(prompt)
+        else:
+            st.warning("⚠️ Crea o carga sistema primero")
+
+    # Mensajes del chat
     if "messages" not in st.session_state:
         clear_chat_history()
 
@@ -571,18 +547,18 @@ def msl_verified_chatbot():
             st.write(msg["content"])
 
     # Input principal
-    if prompt := st.chat_input("Consulta MSL con verificación... (ej: ¿Existe ruta desde Miami a Chile?)"):
+    if prompt := st.chat_input("Consulta tarifas FCL... (ej: ¿Cuál es la tarifa de SHANGHAI a SAI/VAL?)"):
         
         if not OPENAI_API_KEY:
             st.error("🔑 Configura OpenAI API key")
             st.stop()
         
         if not hasattr(st.session_state, 'chain'):
-            st.warning("⚠️ Crea o carga sistema verificado")
+            st.warning("⚠️ Crea o carga sistema FCL marítimo")
             st.stop()
         
-        # Ejecutar respuesta verificada
-        get_msl_verified_response(prompt)
+        # Ejecutar consulta
+        get_maritime_fcl_response(prompt)
 
 def delete_temp_files():
     """Limpiar archivos temporales"""
@@ -598,7 +574,7 @@ def delete_temp_files():
         pass
 
 def clear_chat_history():
-    """Limpiar historial"""
+    """Limpiar historial de chat"""
     st.session_state.messages = [{"role": "assistant", "content": WELCOME_MESSAGE}]
     if hasattr(st.session_state, 'memory') and st.session_state.memory:
         try:
@@ -606,53 +582,23 @@ def clear_chat_history():
         except:
             pass
 
-def test_verification_system():
-    """Test del sistema de verificación"""
-    st.markdown("### 🧪 Test de Verificación")
-    
-    # Test casos específicos
-    test_cases = [
-        "¿Existe ruta desde Miami a Chile?",
-        "¿Cuánto cuesta desde Santos a Chile?", 
-        "¿Qué rutas hay desde Europa?",
-        "¿Hay transporte desde Tokio?"
-    ]
-    
-    for i, test_query in enumerate(test_cases, 1):
-        st.write(f"**Test {i}:** {test_query}")
-        
-        # Test verificación
-        port_info = extract_port_for_verification(test_query)
-        query_type = detect_msl_query_type(test_query)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write(f"   **Tipo:** {query_type}")
-        with col2:
-            if port_info.get('needs_verification'):
-                st.write(f"   **Puerto a verificar:** {port_info['port_requested']}")
-            else:
-                st.write("   **Verificación:** No específica")
-    
-    st.success("✅ Test de verificación completado")
-
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
 
 def main():
-    """Función principal con verificación total"""
+    """Función principal del sistema FCL marítimo"""
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
     
-    # Ejecutar sistema verificado
-    msl_verified_chatbot()
+    # Ejecutar chatbot FCL marítimo
+    maritime_fcl_chatbot()
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-    ✅ MSL (Seemann Group) - Sistema con Verificación Total | Solo información que realmente existe | Powered by LangChain & OpenAI
+    🚢 FCL Marítimo - Sistema de Consulta de Tarifas de Contenedores | POL → POD | Powered by LangChain & OpenAI
     </div>
     """, unsafe_allow_html=True)
 
