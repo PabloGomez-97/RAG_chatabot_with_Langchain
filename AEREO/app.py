@@ -92,14 +92,7 @@ def get_air_freight_response(prompt):
             
             with st.chat_message("assistant"):
                 st.markdown(answer)
-                
-                # Mostrar métricas y análisis
-                display_air_freight_metrics(validation, airport_info, response.get("source_documents", []))
-                
-                # Análisis detallado de fuentes
-                with st.expander("📋 **Análisis Detallado de Rutas**"):
-                    display_route_analysis(response.get("source_documents", []), airport_info)
-                
+
     except Exception as e:
         st.error(f"Error en consulta de carga aérea: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
