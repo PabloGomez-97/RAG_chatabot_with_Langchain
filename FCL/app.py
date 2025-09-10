@@ -158,17 +158,17 @@ def display_fcl_route_analysis(sources: list, port_info: dict):
         pod_target = port_info['pod_detected']
         
         for doc in sources:
-            if (doc.metadata.get('pol') == pol_target and 
-                doc.metadata.get('pod') == pod_target):
+            if (doc.metadata.get('pol', '').upper() == (pol_target or '').upper() and 
+                doc.metadata.get('pod', '').upper() == (pod_target or '').upper()):
                 relevant_docs.append(doc)
     
     elif port_info.get('ports_found'):
         # Buscar documentos que contengan alguno de los puertos
         for doc in sources:
-            pol = doc.metadata.get('pol', '')
-            pod = doc.metadata.get('pod', '')
+            pol_u = doc.metadata.get('pol', '').upper()
+            pod_u = doc.metadata.get('pod', '').upper()
             
-            if any(port in [pol, pod] for port in port_info['ports_found']):
+            if any(port == pol_u or port == pod_u for port in port_info['ports_found']):
                 relevant_docs.append(doc)
     else:
         relevant_docs = sources[:10]  # Mostrar primeros 10 si es consulta general

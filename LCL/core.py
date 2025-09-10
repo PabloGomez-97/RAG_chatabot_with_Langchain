@@ -10,34 +10,44 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
+
 from config import (
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, OPENAI_API_KEY,
-    get_msl_response_template, detect_msl_query_type, extract_port_for_verification
+    get_lcl_maritime_response_template, detect_lcl_maritime_query_type, 
+    extract_lcl_ports_from_query, get_lcl_port_region, analyze_lcl_route_direction,
+    extract_region_from_query, normalize_port_name, matches_pod
 )
 
 ####################################################################
-#            INSPECTOR EXCEL MSL - VERIFICACIÓN TOTAL
+#            INSPECTOR EXCEL LCL MARÍTIMO MULTI-REGIONAL
 ####################################################################
 
-class MSLExcelInspector:
-    """Inspector que verifica cada celda del Excel MSL antes de procesar"""
+class LCLMaritimeExcelInspector:
+    """Inspector especializado para archivos Excel de LCL marítimo multi-regional"""
     
     def __init__(self):
-        self.verified_routes = set()  # Rutas que realmente existen
-        self.all_ports = set()        # Puertos que realmente existen
-        self.raw_data = []           # Datos crudos para verificación
+        self.verified_routes = set()
+        self.all_ports_pol = set()
+        self.all_ports_pod = set()
+        self.companies = set()
+        self.agents = set()
+        self.raw_data = []
         
-    def full_excel_inspection(self, file_path: str) -> Dict[str, Any]:
-        """Inspección completa del Excel MSL celda por celda"""
-        print(f"\n[INSPECTOR] === INSPECCIÓN TOTAL DE {Path(file_path).name} ===")
+    def inspect_lcl_maritime_excel(self, file_path: str) -> Dict[str, Any]:
+        """Inspección completa del Excel de LCL marítimo multi-regional"""
+        print(f"\n[LCL MARITIME] === INSPECCIÓN DE {Path(file_path).name} ===")
         
         inspection_result = {
             'file_path': file_path,
             'sheets_found': [],
-            'total_data_rows': 0,
-            'verified_routes': set(),
-            'all_ports': set(),
-            'regions': {},
+            'total_routes': 0,
+            'regional_data': {},
+            'pol_ports': set(),
+            'pod_ports': set(),
+            'companies': set(),
+            'agents': set(),
+            'currencies': set(),
+            'routes_data': [],
             'inspection_log': []
         }
         
@@ -45,461 +55,479 @@ class MSLExcelInspector:
             xl_file = pd.ExcelFile(file_path)
             inspection_result['sheets_found'] = xl_file.sheet_names
             
-            print(f"[INSPECTOR] Hojas encontradas: {xl_file.sheet_names}")
+            print(f"[LCL MARITIME] Hojas encontradas: {xl_file.sheet_names}")
             
+            # Procesar cada hoja regional
             for sheet_name in xl_file.sheet_names:
-                sheet_inspection = self._inspect_sheet_completely(file_path, sheet_name)
-                inspection_result['regions'][sheet_name] = sheet_inspection
-                inspection_result['total_data_rows'] += sheet_inspection['data_rows_count']
-                inspection_result['verified_routes'].update(sheet_inspection['verified_routes'])
-                inspection_result['all_ports'].update(sheet_inspection['ports_found'])
+                sheet_data = self._inspect_lcl_maritime_sheet(file_path, sheet_name)
+                inspection_result['regional_data'][sheet_name] = sheet_data
+                inspection_result['total_routes'] += sheet_data['routes_count']
+                inspection_result['pol_ports'].update(sheet_data['pol_ports'])
+                inspection_result['pod_ports'].update(sheet_data['pod_ports'])
+                inspection_result['companies'].update(sheet_data['companies'])
+                inspection_result['agents'].update(sheet_data['agents'])
+                inspection_result['currencies'].update(sheet_data['currencies'])
+                inspection_result['routes_data'].extend(sheet_data['routes_data'])
                 
         except Exception as e:
-            error_msg = f"[INSPECTOR] Error inspeccionando archivo: {str(e)}"
+            error_msg = f"[LCL MARITIME] Error inspeccionando archivo: {str(e)}"
             print(error_msg)
             inspection_result['inspection_log'].append(error_msg)
         
-        # Resumen final de inspección
-        print(f"\n[INSPECTOR] === RESUMEN DE INSPECCIÓN ===")
-        print(f"[INSPECTOR] Total rutas verificadas: {len(inspection_result['verified_routes'])}")
-        print(f"[INSPECTOR] Total puertos encontrados: {len(inspection_result['all_ports'])}")
-        print(f"[INSPECTOR] Puertos disponibles: {sorted(list(inspection_result['all_ports']))}")
+        # Resumen final
+        print(f"\n[LCL MARITIME] === RESUMEN DE INSPECCIÓN ===")
+        print(f"[LCL MARITIME] Total rutas encontradas: {inspection_result['total_routes']}")
+        print(f"[LCL MARITIME] Puertos POL: {len(inspection_result['pol_ports'])} únicos")
+        print(f"[LCL MARITIME] Puertos POD: {len(inspection_result['pod_ports'])} únicos")
+        print(f"[LCL MARITIME] Compañías: {sorted(list(inspection_result['companies']))}")
+        print(f"[LCL MARITIME] Distribución regional:")
+        for region, data in inspection_result['regional_data'].items():
+            print(f"  - {region}: {data['routes_count']} rutas")
         
         return inspection_result
     
-    def _inspect_sheet_completely(self, file_path: str, sheet_name: str) -> Dict[str, Any]:
-        """Inspección completa de una hoja"""
-        print(f"\n[INSPECTOR] --- Inspeccionando hoja: {sheet_name} ---")
+    def _inspect_lcl_maritime_sheet(self, file_path: str, sheet_name: str) -> Dict[str, Any]:
+        """Inspección de una hoja regional específica"""
+        print(f"\n[LCL MARITIME] --- Inspeccionando región: {sheet_name} ---")
         
         sheet_result = {
             'sheet_name': sheet_name,
-            'header_row_found': -1,
-            'data_rows_count': 0,
-            'verified_routes': set(),
-            'ports_found': set(),
-            'countries_found': set(),
-            'columns_detected': {},
-            'raw_entries': []
+            'routes_count': 0,
+            'pol_ports': set(),
+            'pod_ports': set(),
+            'countries': set(),
+            'companies': set(),
+            'agents': set(),
+            'services': set(),
+            'currencies': set(),
+            'routes_data': []
         }
         
         try:
-            # Leer toda la hoja sin asumir estructura
-            df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+            # Leer la hoja completa
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
             
             if df.empty:
-                print(f"[INSPECTOR] Hoja {sheet_name} está vacía")
+                print(f"[LCL MARITIME] Región {sheet_name} está vacía")
                 return sheet_result
             
-            print(f"[INSPECTOR] Dimensiones de {sheet_name}: {len(df)} filas x {len(df.columns)} columnas")
+            print(f"[LCL MARITIME] Dimensiones: {len(df)} filas x {len(df.columns)} columnas")
+            print(f"[LCL MARITIME] Columnas: {list(df.columns)}")
             
-            # PASO 1: Encontrar fila de encabezados inspeccionando celda por celda
-            header_row = self._find_header_row_by_inspection(df, sheet_name)
-            sheet_result['header_row_found'] = header_row
+            # Mapear columnas basado en los encabezados conocidos
+            column_mapping = self._map_lcl_maritime_columns(df.columns)
+            print(f"[LCL MARITIME] Mapeo de columnas: {column_mapping}")
             
-            if header_row == -1:
-                print(f"[INSPECTOR] No se encontró fila de encabezados válida en {sheet_name}")
-                return sheet_result
-            
-            # PASO 2: Extraer y mapear columnas reales
-            headers = self._extract_real_headers(df, header_row)
-            column_mapping = self._map_columns_by_content(headers)
-            sheet_result['columns_detected'] = column_mapping
-            
-            print(f"[INSPECTOR] Encabezados detectados: {[h for h in headers if h and str(h).strip()]}")
-            print(f"[INSPECTOR] Mapeo de columnas: {column_mapping}")
-            
-            # PASO 3: Verificar cada fila de datos
-            for row_idx in range(header_row + 1, len(df)):
-                row_verification = self._verify_row_completely(df, row_idx, column_mapping, sheet_name)
+            # Procesar cada fila de datos
+            for index, row in df.iterrows():
+                route_data = self._process_lcl_maritime_row(row, column_mapping, index + 1, sheet_name)
                 
-                if row_verification['is_valid_route']:
-                    sheet_result['verified_routes'].add(row_verification['route_key'])
-                    sheet_result['ports_found'].add(row_verification['port_origin'])
-                    sheet_result['countries_found'].add(row_verification['country'])
-                    sheet_result['raw_entries'].append(row_verification)
-                    sheet_result['data_rows_count'] += 1
+                if route_data['is_valid']:
+                    sheet_result['routes_count'] += 1
+                    sheet_result['pol_ports'].add(route_data['pol'])
+                    sheet_result['pod_ports'].add(route_data['pod'])
+                    sheet_result['countries'].add(route_data['country'])
+                    sheet_result['companies'].add(route_data['company'])
+                    if route_data['agent']:
+                        sheet_result['agents'].add(route_data['agent'])
+                    if route_data['service']:
+                        sheet_result['services'].add(route_data['service'])
+                    
+                    # Detectar monedas
+                    if route_data['ton_m3_currency']:
+                        sheet_result['currencies'].add(route_data['ton_m3_currency'])
+                    if route_data['minimo_currency']:
+                        sheet_result['currencies'].add(route_data['minimo_currency'])
+                    
+                    sheet_result['routes_data'].append(route_data)
             
-            print(f"[INSPECTOR] Hoja {sheet_name}: {sheet_result['data_rows_count']} rutas válidas verificadas")
-            print(f"[INSPECTOR] Puertos en {sheet_name}: {sorted(list(sheet_result['ports_found']))}")
+            print(f"[LCL MARITIME] Rutas válidas en {sheet_name}: {sheet_result['routes_count']}")
             
         except Exception as e:
-            print(f"[INSPECTOR] Error inspeccionando hoja {sheet_name}: {str(e)}")
+            print(f"[LCL MARITIME] Error inspeccionando región {sheet_name}: {str(e)}")
         
         return sheet_result
     
-    def _find_header_row_by_inspection(self, df: pd.DataFrame, sheet_name: str) -> int:
-        """Encuentra fila de encabezados inspeccionando contenido real"""
-        
-        # Palabras clave que indican fila de encabezados MSL
-        header_keywords = ['POL', 'PAIS', 'PAÍS', 'PUERTO', 'TON', 'M3', 'MINIMO', 'MÍNIMO', 'FREC', 'SERVICIO', 'AGENTE', "COMPANY"]
-        
-        for row_idx in range(min(15, len(df))):
-            row_content = []
-            keyword_matches = 0
-            
-            # Inspeccionar cada celda de la fila
-            for col_idx in range(len(df.columns)):
-                cell_value = self._get_safe_cell_value(df, row_idx, col_idx)
-                if cell_value:
-                    row_content.append(cell_value)
-                    # Contar coincidencias con palabras clave
-                    for keyword in header_keywords:
-                        if keyword.upper() in str(cell_value).upper():
-                            keyword_matches += 1
-            
-            print(f"[INSPECTOR] Fila {row_idx + 1}: {keyword_matches} keywords, contenido: {row_content[:5]}")
-            
-            # Si encontramos suficientes palabras clave, es la fila de encabezados
-            if keyword_matches >= 3:
-                print(f"[INSPECTOR] Fila de encabezados detectada en: {row_idx + 1}")
-                return row_idx
-        
-        print(f"[INSPECTOR] No se detectó fila de encabezados válida")
-        return -1
-    
-    def _extract_real_headers(self, df: pd.DataFrame, header_row: int) -> List[str]:
-        """Extrae encabezados reales de la fila detectada"""
-        headers = []
-        
-        for col_idx in range(len(df.columns)):
-            header_value = self._get_safe_cell_value(df, header_row, col_idx)
-            headers.append(header_value if header_value else "")
-        
-        return headers
-    
-    def _map_columns_by_content(self, headers: List[str]) -> Dict[str, int]:
-        """Mapea columnas basándose en contenido real de encabezados"""
+    def _map_lcl_maritime_columns(self, columns: List[str]) -> Dict[str, str]:
+        """Mapea las columnas del Excel basado en los encabezados conocidos"""
         mapping = {}
         
-        for idx, header in enumerate(headers):
-            if not header:
-                continue
-                
-            header_upper = str(header).upper().strip()
+        for col in columns:
+            col_upper = str(col).upper().strip()
             
-            # Mapeo específico basado en inspección real
-            if 'POL' in header_upper or ('PUERTO' in header_upper and 'CARGA' in header_upper):
-                mapping['puerto_origen'] = idx
-            elif 'PAIS' in header_upper or 'PAÍS' in header_upper:
-                mapping['pais'] = idx
-            elif 'TON' in header_upper and 'M3' in header_upper:
-                mapping['tarifa'] = idx
-            elif 'MINIMO' in header_upper or 'MÍNIMO' in header_upper:
-                mapping['minimo'] = idx
-            elif 'T / T' in header_upper or ('APROX' in header_upper and 'T' in header_upper):
-                mapping['transito'] = idx
-            elif 'FREC' in header_upper:
-                mapping['frecuencia'] = idx
-            elif 'OTROS' in header_upper:
-                mapping['otros'] = idx
-            elif 'SERVICIO' in header_upper:
-                mapping['servicio'] = idx
-            elif 'AGENTE' in header_upper:
-                mapping['agente'] = idx
-            elif 'OBSERVACIONES' in header_upper:
-                mapping['observaciones'] = idx
-            elif 'COMPANY' in header_upper:
-                mapping['company'] = idx
+            if col_upper == 'POL':
+                mapping['pol'] = col
+            elif col_upper == 'PAIS':
+                mapping['country'] = col
+            elif col_upper == 'POD':
+                mapping['pod'] = col
+            elif col_upper == 'TON / M3 USD/EUR':
+                mapping['ton_m3'] = col
+            elif col_upper == 'MINIMO':
+                mapping['minimo'] = col
+            elif col_upper == 'T / T APROX.':
+                mapping['transit_time'] = col
+            elif col_upper == 'FREC.':
+                mapping['frequency'] = col
+            elif col_upper == 'OTROS':
+                mapping['others'] = col
+            elif col_upper == 'SERVICIO':
+                mapping['service'] = col
+            elif col_upper == 'AGENTE':
+                mapping['agent'] = col
+            elif col_upper == 'COMPANY':
+                mapping['company'] = col
         
         return mapping
     
-    def _verify_row_completely(self, df: pd.DataFrame, row_idx: int, 
-                               column_mapping: Dict[str, int], sheet_name: str) -> Dict[str, Any]:
-        """Verifica completamente una fila de datos"""
+    def _process_lcl_maritime_row(self, row: pd.Series, column_mapping: Dict[str, str], 
+                                 row_number: int, sheet_name: str) -> Dict[str, Any]:
+        """Procesa una fila individual del Excel"""
         
-        verification = {
-            'row_index': row_idx,
-            'is_valid_route': False,
-            'port_origin': '',
+        route_data = {
+            'is_valid': False,
+            'row_number': row_number,
+            'sheet_name': sheet_name,
+            'region': sheet_name,
+            'pol': '',
             'country': '',
-            'route_key': '',
-            'raw_data': {},
-            'verification_log': []
+            'pod': '',
+            'ton_m3': '',
+            'minimo': '',
+            'transit_time': '',
+            'frequency': '',
+            'others': '',
+            'service': '',
+            'agent': '',
+            'company': '',
+            'ton_m3_currency': '',
+            'minimo_currency': '',
+            'route_key': ''
         }
         
         try:
-            # Extraer datos de la fila usando mapeo real
-            puerto_origen = self._get_safe_cell_value(df, row_idx, column_mapping.get('puerto_origen', 0))
-            pais = self._get_safe_cell_value(df, row_idx, column_mapping.get('pais', 1))
-            tarifa = self._get_safe_cell_value(df, row_idx, column_mapping.get('tarifa', 2))
-            minimo = self._get_safe_cell_value(df, row_idx, column_mapping.get('minimo', 3))
-            transito = self._get_safe_cell_value(df, row_idx, column_mapping.get('transito', 4))
-            frecuencia = self._get_safe_cell_value(df, row_idx, column_mapping.get('frecuencia', 5))
-            otros = self._get_safe_cell_value(df, row_idx, column_mapping.get('otros', 6))
-            servicio = self._get_safe_cell_value(df, row_idx, column_mapping.get('servicio', 7))
-            agente = self._get_safe_cell_value(df, row_idx, column_mapping.get('agente', 8))
-            observaciones = self._get_safe_cell_value(df, row_idx, column_mapping.get('observaciones', 9))
-            company = self._get_safe_cell_value(df, row_idx, column_mapping.get('company', -1))
+            # Extraer datos usando el mapeo
+            pol = self._safe_get_value(row, column_mapping.get('pol', ''))
+            country = self._safe_get_value(row, column_mapping.get('country', ''))
+            pod = self._safe_get_value(row, column_mapping.get('pod', ''))
+            ton_m3 = self._safe_get_value(row, column_mapping.get('ton_m3', ''))
+            minimo = self._safe_get_value(row, column_mapping.get('minimo', ''))
+            transit_time = self._safe_get_value(row, column_mapping.get('transit_time', ''))
+            frequency = self._safe_get_value(row, column_mapping.get('frequency', ''))
+            others = self._safe_get_value(row, column_mapping.get('others', ''))
+            service = self._safe_get_value(row, column_mapping.get('service', ''))
+            agent = self._safe_get_value(row, column_mapping.get('agent', ''))
+            company = self._safe_get_value(row, column_mapping.get('company', ''))
+            pol = normalize_port_name(pol, "pol")
+            pod = normalize_port_name(pod, "pod")
+            country = (country or "").strip()
             
-            # VERIFICACIÓN ESTRICTA: Solo acepta filas con datos mínimos válidos
-            if puerto_origen and pais and puerto_origen.strip() and pais.strip():
-                # Es una ruta válida
-                verification['is_valid_route'] = True
-                verification['port_origin'] = puerto_origen.strip()
-                verification['country'] = pais.strip()
-                verification['route_key'] = f"{puerto_origen.strip().lower()}_to_chile"
+            
+            # Validar que tiene datos mínimos necesarios
+            if pol and pod and country:
+                route_data['is_valid'] = True
+                route_data['pol'] = pol
+                route_data['country'] = country
+                route_data['pod'] = pod
+                route_data['ton_m3'] = ton_m3
+                route_data['minimo'] = minimo
+                route_data['transit_time'] = transit_time
+                route_data['frequency'] = frequency
+                route_data['others'] = others
+                route_data['service'] = service
+                route_data['agent'] = agent
+                route_data['company'] = company
+                route_data['route_key'] = f"{pol}_{pod}_{sheet_name}"
+
                 
-                verification['raw_data'] = {
-                    'puerto_origen': puerto_origen,
-                    'pais': pais,
-                    'tarifa': tarifa,
-                    'minimo': minimo,
-                    'transito': transito,
-                    'frecuencia': frecuencia,
-                    'otros': otros,
-                    'servicio': servicio,
-                    'agente': agente,
-                    'observaciones': observaciones,
-                    'company': company,
-                    'sheet_name': sheet_name,
-                    'row_number': row_idx + 1
-                }
-                
-                verification['verification_log'].append(f"✅ Ruta válida: {puerto_origen} ({pais}) → Chile")
-            else:
-                verification['verification_log'].append(f"❌ Fila inválida: puerto='{puerto_origen}', país='{pais}'")
+                # Extraer monedas
+                route_data['ton_m3_currency'] = self._extract_currency(ton_m3)
+                route_data['minimo_currency'] = self._extract_currency(minimo)
                 
         except Exception as e:
-            verification['verification_log'].append(f"❌ Error verificando fila {row_idx + 1}: {str(e)}")
+            print(f"[LCL MARITIME] Error procesando fila {row_number}: {str(e)}")
         
-        return verification
+        return route_data
     
-    def _get_safe_cell_value(self, df: pd.DataFrame, row: int, col: int) -> str:
-        """Obtiene valor de celda de forma segura"""
-        try:
-            if row >= len(df) or col < 0 or col >= len(df.columns):
-                return ""
-            
-            value = df.iloc[row, col]
-            
-            if pd.isna(value) or value is None:
-                return ""
-            
-            return str(value).strip()
-        except Exception:
+    def _safe_get_value(self, row: pd.Series, column: str) -> str:
+        """Obtiene valor de forma segura"""
+        if not column or column not in row:
+            return ""
+        
+        value = row[column]
+        if pd.isna(value) or value is None:
+            return ""
+        
+        return str(value).strip()
+    
+    def _extract_currency(self, value: str) -> str:
+        """Extrae la moneda de un valor monetario"""
+        if not value:
+            return ""
+        
+        value_upper = str(value).upper()
+        
+        if 'USD' in value_upper:
+            return 'USD'
+        elif 'EUR' in value_upper:
+            return 'EUR'
+        elif 'GBP' in value_upper:
+            return 'GBP'
+        else:
             return ""
 
 ####################################################################
-#            PROCESADOR MSL CON VERIFICACIÓN
+#            PROCESADOR DE LCL MARÍTIMO
 ####################################################################
 
-class MSLVerifiedProcessor:
-    """Procesador que solo crea documentos de rutas verificadas"""
+class LCLMaritimeProcessor:
+    """Procesador que crea documentos de rutas LCL marítimas verificadas"""
     
     def __init__(self):
-        self.inspector = MSLExcelInspector()
+        self.inspector = LCLMaritimeExcelInspector()
         
-    def process_excel_with_verification(self, file_path: str) -> List[Document]:
-        """Procesa Excel MSL solo después de verificación completa"""
+    def process_lcl_maritime_excel(self, file_path: str) -> List[Document]:
+        """Procesa Excel de LCL marítimo y crea documentos"""
         
-        print(f"\n[PROCESADOR] === PROCESAMIENTO CON VERIFICACIÓN ===")
+        print(f"\n[PROCESSOR] === PROCESANDO LCL MARÍTIMO: {file_path} ===")
         
-        # PASO 1: Inspección completa
-        inspection = self.inspector.full_excel_inspection(file_path)
+        # Inspección completa
+        inspection = self.inspector.inspect_lcl_maritime_excel(file_path)
         
-        if inspection['total_data_rows'] == 0:
-            print(f"[PROCESADOR] ❌ No se encontraron rutas válidas en {Path(file_path).name}")
+        if inspection['total_routes'] == 0:
+            print(f"[PROCESSOR] No se encontraron rutas válidas en {Path(file_path).name}")
             return []
         
-        print(f"[PROCESADOR] ✅ {inspection['total_data_rows']} rutas verificadas encontradas")
+        print(f"[PROCESSOR] {inspection['total_routes']} rutas encontradas")
         
-        # PASO 2: Crear documentos solo de rutas verificadas
+        # Crear documentos
         documents = []
         
-        for sheet_name, sheet_data in inspection['regions'].items():
-            for verified_entry in sheet_data['raw_entries']:
-                doc = self._create_verified_document(verified_entry, file_path)
-                if doc:
-                    documents.append(doc)
+        for route_data in inspection['routes_data']:
+            doc = self._create_lcl_maritime_document(route_data, file_path)
+            if doc:
+                documents.append(doc)
         
-        print(f"[PROCESADOR] ✅ {len(documents)} documentos creados de rutas verificadas")
+        print(f"[PROCESSOR] {len(documents)} documentos creados")
         
         return documents
     
-    def _create_verified_document(self, verified_entry: Dict, file_path: str) -> Document:
-        """Crea documento solo de entrada verificada"""
+    def _create_lcl_maritime_document(self, route_data: Dict, file_path: str) -> Document:
+        """Crea documento de una ruta LCL marítima"""
         
-        raw_data = verified_entry['raw_data']
+        # Información básica
+        pol = route_data['pol']
+        pod = route_data['pod']
+        country = route_data['country']
+        region = route_data['region']
+        company = route_data['company']
         
-        # Datos verificados
-        puerto_origen = raw_data['puerto_origen']
-        pais = raw_data['pais']
-        sheet_name = raw_data['sheet_name']
-        company_value = raw_data.get('company') or 'No especificado'
+        # Determinar tipo de operación
+        operation_type = analyze_lcl_route_direction(pol, pod)
+        pol_region = get_lcl_port_region(pol)
+        pod_region = get_lcl_port_region(pod)
         
-        # Normalizar datos solo si existen
-        tarifa_text = self._safe_format_currency(raw_data.get('tarifa', ''))
-        minimo_text = self._safe_format_currency(raw_data.get('minimo', ''))
-        transito_text = self._safe_format_time(raw_data.get('transito', ''))
+        # Formatear tarifas
+        ton_m3_formatted = self._format_tariff(route_data['ton_m3'])
+        minimo_formatted = self._format_tariff(route_data['minimo'])
         
-        # Crear contenido del documento verificado
-        content = f"""TARIFA LCL MARÍTIMA MSL - RUTA VERIFICADA
+        # Crear contenido del documento
+        content = f"""TARIFA LCL MARÍTIMO MSL - RUTA VERIFICADA
 Archivo: {Path(file_path).name}
-Región: {sheet_name}
-Fila: {raw_data['row_number']}
+Región: {region}
+Fila: {route_data['row_number']}
 Estado: VERIFICADO ✅
 
-=== INFORMACIÓN VERIFICADA ===
-PUERTO ORIGEN: {puerto_origen}
-PAÍS ORIGEN: {pais}
-DESTINO: Chile (San Antonio/Valparaíso)
-REGIÓN MSL: {sheet_name}
-COMPANY: {raw_data.get('company', 'No especificado')}
+=== INFORMACIÓN DE RUTA ===
+PUERTO ORIGEN (POL): {pol}
+PAÍS ORIGEN: {country}
+REGIÓN ORIGEN: {pol_region}
+PUERTO DESTINO (POD): {pod}
+REGIÓN DESTINO: {pod_region}
+TIPO OPERACIÓN: {operation_type}
+COMPAÑÍA: {company}
 
 === TARIFAS VERIFICADAS ===
-TARIFA TON/M³: {tarifa_text}
-MÍNIMO: {minimo_text}
-TIEMPO TRÁNSITO: {transito_text}
-FRECUENCIA: {raw_data.get('frecuencia', 'No especificado')}
+TARIFA TON/M3: {ton_m3_formatted}
+MÍNIMO: {minimo_formatted}
+MONEDA TON/M3: {route_data['ton_m3_currency']}
+MONEDA MÍNIMO: {route_data['minimo_currency']}
 
-=== SERVICIO VERIFICADO ===
-TIPO SERVICIO: {raw_data.get('servicio', 'No especificado')}
-AGENTE LOCAL: {raw_data.get('agente', 'No especificado')}
-COSTOS ADICIONALES: {raw_data.get('otros', 'No especificado')}
-COMPANIA LOCAL: {raw_data.get('company', 'No especificado')}
+=== SERVICIO ===
+TIEMPO TRÁNSITO: {route_data['transit_time'] or 'No especificado'}
+FRECUENCIA: {route_data['frequency'] or 'No especificado'}
+TIPO SERVICIO: {route_data['service'] or 'No especificado'}
+AGENTE LOCAL: {route_data['agent'] or 'No especificado'}
+COSTOS ADICIONALES: {route_data['others'] or 'No especificado'}
 
-=== OBSERVACIONES VERIFICADAS ===
-{raw_data.get('observaciones', 'Sin observaciones')}
+=== RUTA DETALLADA ===
+🚢 {pol} ({country}) → 🏢 {pod} ({pod_region})
+📍 Región: {region}
+💼 Operadora: {company}
+🚢 Servicio: {route_data['service'] or 'Sin especificar'}
+💰 Desde {ton_m3_formatted} por TON/M3
+📊 Mínimo {minimo_formatted}
+⏰ Tránsito: {route_data['transit_time'] or 'No especificado'}
+🔄 Frecuencia: {route_data['frequency'] or 'No especificado'}
 
 === VERIFICACIÓN ===
-✅ Ruta confirmada en tarifario MSL
+✅ Ruta confirmada en tarifario LCL MSL
 ✅ Datos extraídos directamente del Excel
-✅ Puerto origen: {puerto_origen}
-✅ Destino confirmado: Chile
+✅ Puerto origen verificado: {pol}
+✅ Puerto destino verificado: {pod}
+✅ Región verificada: {region}
+✅ Compañía verificada: {company}
 """
         
         metadata = {
             "source": file_path,
-            "sheet_name": sheet_name,
-            "puerto_origen": puerto_origen,
-            "pais_origen": pais,
-            "company": raw_data.get('company', 'No especificado'),  # ← NUEVO: Agregar company a metadata
-            "row_number": raw_data['row_number'],
+            "region": region,
+            "pol": pol,
+            "country": country,
+            "pod": pod,
+            "company": company,
+            "agent": route_data['agent'],
+            "service": route_data['service'],
+            "row_number": route_data['row_number'],
+            "route_key": route_data['route_key'],
+            "operation_type": operation_type,
+            "pol_region": pol_region,
+            "pod_region": pod_region,
+            "ton_m3_currency": route_data['ton_m3_currency'],
+            "minimo_currency": route_data['minimo_currency'],
+            "transit_time": route_data['transit_time'],
+            "frequency": route_data['frequency'],
             "verification_status": "VERIFIED",
-            "route_exists": True,
-            "content_type": "msl_verified_route"
+            "content_type": "lcl_maritime_route"
         }
         
         return Document(page_content=content, metadata=metadata)
     
-    def _safe_format_currency(self, value: str) -> str:
-        """Formato seguro de moneda"""
-        if not value or str(value).strip() == '':
+    def _format_tariff(self, value: str) -> str:
+        """Formatea una tarifa para mostrar"""
+        if not value or str(value).strip() == '' or str(value).lower() == 'nan':
             return "No disponible"
         
-        value_str = str(value).strip()
-        if 'EUR' in value_str.upper():
-            return value_str
-        elif 'USD' in value_str.upper():
-            return value_str
-        elif any(char.isdigit() for char in value_str):
-            return f"USD {value_str}"
-        else:
-            return "No disponible"
-    
-    def _safe_format_time(self, value: str) -> str:
-        """Formato seguro de tiempo"""
-        if not value or str(value).strip() == '':
-            return "No especificado"
-        
-        value_str = str(value).strip()
-        if 'día' in value_str.lower() or 'day' in value_str.lower():
-            return value_str
-        elif any(char.isdigit() for char in value_str):
-            return f"{value_str} días"
-        else:
-            return value_str
+        return str(value).strip()
 
 ####################################################################
-#            FUNCIÓN DE CARGA CON VERIFICACIÓN
+#            FUNCIÓN DE CARGA DE DOCUMENTOS LCL
 ####################################################################
 
-def load_msl_documents_with_verification() -> List[Document]:
-    """Carga documentos MSL con verificación total"""
+def load_lcl_maritime_documents() -> List[Document]:
+    """Carga documentos de LCL marítimo"""
     
-    print("\n[MSL] === CARGA CON VERIFICACIÓN TOTAL ===")
+    print("\n[LCL MARITIME] === CARGA DE DOCUMENTOS LCL MARÍTIMO ===")
     
     # Buscar archivos Excel
     excel_files = list(TMP_DIR.glob("**/*.xlsx")) + list(TMP_DIR.glob("**/*.xls"))
     
     if not excel_files:
-        print("[MSL] ❌ No se encontraron archivos Excel")
+        print("[LCL MARITIME] No se encontraron archivos Excel")
         return []
     
-    print(f"[MSL] Archivos encontrados: {[f.name for f in excel_files]}")
+    print(f"[LCL MARITIME] Archivos encontrados: {[f.name for f in excel_files]}")
     
-    processor = MSLVerifiedProcessor()
+    processor = LCLMaritimeProcessor()
     all_documents = []
     
     for excel_file in excel_files:
         try:
-            print(f"\n[MSL] === PROCESANDO CON VERIFICACIÓN: {excel_file.name} ===")
-            file_docs = processor.process_excel_with_verification(str(excel_file))
+            print(f"\n[LCL MARITIME] === PROCESANDO: {excel_file.name} ===")
+            file_docs = processor.process_lcl_maritime_excel(str(excel_file))
             all_documents.extend(file_docs)
             
         except Exception as e:
-            print(f"[MSL] ❌ Error procesando {excel_file.name}: {str(e)}")
+            print(f"[LCL MARITIME] Error procesando {excel_file.name}: {str(e)}")
             continue
     
-    print(f"\n[MSL] === RESUMEN FINAL ===")
-    print(f"[MSL] Total documentos verificados: {len(all_documents)}")
+    print(f"\n[LCL MARITIME] === RESUMEN FINAL ===")
+    print(f"[LCL MARITIME] Total documentos: {len(all_documents)}")
     
-    # Verificar rutas únicas
-    unique_routes = set()
+    # Analizar rutas únicas por región
+    regional_stats = {}
+    pol_ports = set()
+    pod_ports = set()
+    companies = set()
+    agents = set()
+    
     for doc in all_documents:
-        puerto = doc.metadata.get('puerto_origen', '')
-        if puerto:
-            unique_routes.add(puerto)
+        region = doc.metadata.get('region', 'Unknown')
+        if region not in regional_stats:
+            regional_stats[region] = 0
+        regional_stats[region] += 1
+        
+        pol = doc.metadata.get('pol', '')
+        if pol:
+            pol_ports.add(pol)
+            
+        pod = doc.metadata.get('pod', '')
+        if pod:
+            pod_ports.add(pod)
+            
+        company = doc.metadata.get('company', '')
+        if company:
+            companies.add(company)
+            
+        agent = doc.metadata.get('agent', '')
+        if agent:
+            agents.add(agent)
     
-    print(f"[MSL] Rutas únicas verificadas: {len(unique_routes)}")
-    print(f"[MSL] Puertos disponibles: {sorted(list(unique_routes))}")
+    print(f"[LCL MARITIME] Distribución regional:")
+    for region, count in regional_stats.items():
+        print(f"  - {region}: {count} rutas")
+    print(f"[LCL MARITIME] Puertos POL únicos: {len(pol_ports)}")
+    print(f"[LCL MARITIME] Puertos POD únicos: {len(pod_ports)}")
+    print(f"[LCL MARITIME] Compañías: {sorted(list(companies))}")
+    print(f"[LCL MARITIME] Agentes únicos: {len(agents)}")
     
     return all_documents
 
 ####################################################################
-#            RETRIEVER Y CHAIN CON VERIFICACIÓN
+#            RETRIEVER Y CHAIN
 ####################################################################
 
-def create_msl_verified_retriever(vector_store, k=30):
-    """Crea retriever para documentos verificados - optimizado para múltiples opciones"""
+def create_lcl_maritime_retriever(vector_store, k=25):
+    """Crea retriever para documentos de LCL marítimo"""
     return vector_store.as_retriever(
-        search_type="similarity",  # Usar similarity en lugar de MMR
+        search_type="similarity",
         search_kwargs={
-            "k": k,  # Aumentar k para capturar más opciones
+            "k": k,
         }
     )
 
-def create_msl_verified_chain(retriever):
-    from langchain.prompts import PromptTemplate
-    """Crea chain conversacional con verificación estricta"""
+def create_lcl_maritime_chain(retriever):
+    """Crea chain conversacional para LCL marítimo"""
     
     condense_question_prompt = PromptTemplate(
         input_variables=["chat_history", "question"],
-        template="""Reformula la pregunta para buscar SOLO información que realmente existe en el tarifario MSL.
+        template="""Reformula la pregunta para buscar información específica de tarifas LCL marítimas.
 
-VERIFICACIÓN ESTRICTA:
-- Solo buscar rutas que realmente existen
-- No asumir información que no esté documentada
-- Verificar disponibilidad antes de responder
+ENFOQUE LCL MARÍTIMO:
+- Buscar rutas específicas entre puertos (POL → POD)
+- Identificar regiones si están presentes (América, Europa, Norteamérica, Asia)
+- Verificar disponibilidad de rutas
+- Buscar información de tarifas TON/M3, agentes y tiempos de tránsito
 
 Historial: {chat_history}
 Pregunta: {question}
 
-Pregunta reformulada para verificación:""",
+Pregunta reformulada para búsqueda:""",
     )
 
-    answer_prompt = ChatPromptTemplate.from_template(get_msl_response_template())
+    answer_prompt = ChatPromptTemplate.from_template(get_lcl_maritime_response_template())
     
     doc_prompt = PromptTemplate(
-        input_variables=["page_content","company","sheet_name","row_number","puerto_origen","pais_origen"],
+        input_variables=["page_content", "region", "pol", "pod", "company", "agent", "row_number"],
         template=(
             "{page_content}\n\n"
             "[METADATOS]\n"
+            "Región: {region}\n"
+            "POL: {pol}\n"
+            "POD: {pod}\n"
             "Company: {company}\n"
-            "Hoja: {sheet_name}\n"
+            "Agente: {agent}\n"
             "Fila: {row_number}\n"
-            "Puerto: {puerto_origen}\n"
-            "País: {pais_origen}\n"
         )
     )
     
@@ -519,13 +547,13 @@ Pregunta reformulada para verificación:""",
     response_llm = ChatOpenAI(
         api_key=OPENAI_API_KEY,
         model="gpt-4o", 
-        temperature=0.0,  # Temperatura 0 para máxima precisión
+        temperature=0.0,
         model_kwargs={"top_p": 0.9}
     )
 
     chain = ConversationalRetrievalChain.from_llm(
         condense_question_prompt=condense_question_prompt,
-        combine_docs_chain_kwargs={"prompt": answer_prompt, "document_prompt": doc_prompt,},
+        combine_docs_chain_kwargs={"prompt": answer_prompt, "document_prompt": doc_prompt},
         condense_question_llm=standalone_query_llm,
         llm=response_llm,
         memory=memory,
@@ -539,88 +567,130 @@ Pregunta reformulada para verificación:""",
     return chain, memory
 
 ####################################################################
-#            VALIDACIÓN ESTRICTA
+#            VALIDACIÓN Y ANÁLISIS
 ####################################################################
 
-def validate_msl_route_exists(query: str, documents: List[Document]) -> Dict[str, Any]:
-    """Valida que la ruta consultada realmente existe"""
+def validate_lcl_maritime_route(query: str, documents: List[Document]) -> Dict[str, Any]:
+    """Valida que la ruta LCL marítima consultada existe"""
     
     validation = {
         'route_exists': False,
-        'route_requested': '',
+        'ports_requested': [],
+        'pol_requested': None,
+        'pod_requested': None,
+        'region_requested': None,
         'available_routes': [],
-        'verification_status': 'NOT_FOUND',
-        'suggestions': []
+        'suggestions': [],
+        'verification_status': 'NOT_FOUND'
     }
     
-    # Extraer puerto solicitado
-    port_info = extract_port_for_verification(query)
-    
-    if not port_info.get('needs_verification'):
-        validation['verification_status'] = 'NO_SPECIFIC_ROUTE'
-        return validation
-    
-    port_requested = port_info['port_requested'].lower()
-    validation['route_requested'] = port_requested
+    # Extraer puertos de la consulta
+    port_info = extract_lcl_ports_from_query(query)
+    requested_pol = normalize_port_name(port_info['pol_detected'], "pol") if port_info['pol_detected'] else None
+    requested_pod = normalize_port_name(port_info['pod_detected'], "pod") if port_info['pod_detected'] else None
+    ports_found_norm = [normalize_port_name(p, "any") for p in port_info['ports_found']]
+
+    validation['ports_requested'] = port_info['ports_found']
+    validation['pol_requested'] = port_info['pol_detected']
+    validation['pod_requested'] = port_info['pod_detected']
+    validation['region_requested'] = extract_region_from_query(query)
     
     # Verificar en documentos
     for doc in documents:
         if doc.metadata.get('verification_status') == 'VERIFIED':
-            puerto_origen = doc.metadata.get('puerto_origen', '').lower()
+            pol = doc.metadata.get('pol', '')
+            pod = doc.metadata.get('pod', '')
+            pol_doc = normalize_port_name(doc.metadata.get('pol', ''), "pol")
+            pod_doc = normalize_port_name(doc.metadata.get('pod', ''), "pod")
+            region = doc.metadata.get('region', '')
+            route_key = f"{pol_doc}_{pod_doc}_{region}"
+            validation['available_routes'].append(route_key)
             
-            if puerto_origen:
-                validation['available_routes'].append(puerto_origen)
-                
-                # Verificar coincidencia exacta o parcial
-                if port_requested in puerto_origen or puerto_origen in port_requested:
+            # Verificar coincidencia exacta de ruta
+            if port_info['has_route_pattern']:
+                if pol_doc == (requested_pol or "") and matches_pod((requested_pod or ""), pod_doc):
                     validation['route_exists'] = True
-                    validation['verification_status'] = 'VERIFIED_EXISTS'
+                    validation['verification_status'] = 'EXACT_ROUTE_FOUND'
+            
+            # Verificar puertos individuales
+            elif ports_found_norm:
+                for p in ports_found_norm:
+                    # Si p parece un POD chileno, aplicar la regla de POD
+                    if p in {"SAN ANTONIO", "VALPARAISO", "SAI/VAP"}:
+                        if matches_pod(p, pod_doc):
+                            validation['route_exists'] = True
+                            validation['verification_status'] = 'PORT_FOUND'
+                    else:
+                        # p puede ser un POL u otro puerto; igualdad normalizada
+                        if p in (pol_doc, pod_doc):
+                            validation['route_exists'] = True
+                            validation['verification_status'] = 'PORT_FOUND'
     
-    # Si no existe, sugerir alternativas
+    # Generar sugerencias si no se encuentra la ruta exacta
     if not validation['route_exists'] and validation['available_routes']:
-        # Buscar rutas similares
-        similar_routes = []
-        for route in set(validation['available_routes']):
-            if any(word in route for word in port_requested.split()):
-                similar_routes.append(route)
-        
-        validation['suggestions'] = similar_routes[:5]
-        validation['verification_status'] = 'NOT_FOUND_WITH_SUGGESTIONS'
+        if requested_pol:
+            validation['suggestions'].extend([rk for rk in validation['available_routes'] if rk.startswith(f"{requested_pol}_")][:5])
+        if requested_pod:
+            validation['suggestions'].extend([rk for rk in validation['available_routes'] if rk.split('_')[1] == requested_pod][:5])
     
     return validation
 
-def analyze_msl_verified_sources(sources: List[Document]) -> Dict[str, Any]:
-    """Analiza fuentes verificadas MSL"""
+def analyze_lcl_maritime_sources(sources: List[Document]) -> Dict[str, Any]:
+    """Analiza fuentes de LCL marítimo"""
     
     analysis = {
-        "total_verified": 0,
-        "regions": {},
-        "verified_ports": set(),
-        "verified_countries": set(),
-        "companies": {}  # ← NUEVO: Agregar análisis por company
+        "total_routes": 0,
+        "regional_distribution": {},
+        "pol_ports": set(),
+        "pod_ports": set(),
+        "companies": set(),
+        "agents": set(),
+        "countries": set(),
+        "currencies": set(),
+        "operation_types": {}
     }
     
     for doc in sources:
         if doc.metadata.get('verification_status') == 'VERIFIED':
-            analysis['total_verified'] += 1
+            analysis['total_routes'] += 1
             
-            # Por región
-            region = doc.metadata.get('sheet_name', 'Desconocido')
-            analysis['regions'][region] = analysis['regions'].get(region, 0) + 1
+            # Distribución regional
+            region = doc.metadata.get('region', 'Unknown')
+            analysis['regional_distribution'][region] = analysis['regional_distribution'].get(region, 0) + 1
             
-            # Puertos verificados
-            puerto = doc.metadata.get('puerto_origen', '')
-            if puerto:
-                analysis['verified_ports'].add(puerto)
+            # Puertos
+            pol = doc.metadata.get('pol', '')
+            pod = doc.metadata.get('pod', '')
+            if pol:
+                analysis['pol_ports'].add(pol)
+            if pod:
+                analysis['pod_ports'].add(pod)
             
-            # Países verificados
-            pais = doc.metadata.get('pais_origen', '')
-            if pais:
-                analysis['verified_countries'].add(pais)
-            
-            # ← NUEVO: Companies verificadas
-            company = doc.metadata.get('company', 'No especificado')
+            # Compañías y agentes
+            company = doc.metadata.get('company', '')
             if company:
-                analysis['companies'][company] = analysis['companies'].get(company, 0) + 1
+                analysis['companies'].add(company)
+            
+            agent = doc.metadata.get('agent', '')
+            if agent:
+                analysis['agents'].add(agent)
+            
+            # Países
+            country = doc.metadata.get('country', '')
+            if country:
+                analysis['countries'].add(country)
+            
+            # Monedas
+            ton_m3_currency = doc.metadata.get('ton_m3_currency', '')
+            minimo_currency = doc.metadata.get('minimo_currency', '')
+            if ton_m3_currency:
+                analysis['currencies'].add(ton_m3_currency)
+            if minimo_currency:
+                analysis['currencies'].add(minimo_currency)
+            
+            # Tipos de operación
+            op_type = doc.metadata.get('operation_type', '')
+            if op_type:
+                analysis['operation_types'][op_type] = analysis['operation_types'].get(op_type, 0) + 1
     
     return analysis

@@ -207,6 +207,7 @@ def extract_ports_from_query(query: str) -> dict:
 
 def get_port_region(port_code: str) -> str:
     """Determina la región de un puerto"""
+    port_code = (port_code or "").upper().strip()
     regions = {
         'China': ['SHANGHAI', 'NINGBO', 'QINGDAO', 'SHENZHEN', 'TIANJIN', 'XIAMEN', 'BASE PORTS'],
         'Southeast Asia': ['SINGAPORE', 'PORTKLANG', 'PENANG', 'JAKARTA', 'SURABAYA', 

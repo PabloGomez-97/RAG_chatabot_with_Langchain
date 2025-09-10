@@ -203,6 +203,8 @@ class MaritimeFCLExcelInspector:
             free_time = self._safe_get_value(row, column_mapping.get('free_time', ''))
             other = self._safe_get_value(row, column_mapping.get('other', ''))
             company = self._safe_get_value(row, column_mapping.get('company', ''))
+            pol = pol.strip().upper() if pol else ""
+            pod = pod.strip().upper() if pod else ""
             
             # Validar que tiene datos mínimos necesarios
             if pol and pod:
@@ -558,21 +560,23 @@ def validate_maritime_fcl_route(query: str, documents: List[Document]) -> Dict[s
         if doc.metadata.get('verification_status') == 'VERIFIED':
             pol = doc.metadata.get('pol', '')
             pod = doc.metadata.get('pod', '')
-            route_key = f"{pol}_{pod}"
+            pol_u = (pol or "").upper().strip()
+            pod_u = (pod or "").upper().strip()
+            route_key = f"{pol_u}_{pod_u}"
             
             validation['available_routes'].append(route_key)
             
             # Verificar coincidencia exacta de ruta
             if port_info['has_route_pattern']:
-                if (pol == port_info['pol_detected'] and 
-                    pod == port_info['pod_detected']):
+                if (pol_u == (port_info['pol_detected'] or '').upper().strip() and 
+                    pod_u == (port_info['pod_detected'] or '').upper().strip()):
                     validation['route_exists'] = True
                     validation['verification_status'] = 'EXACT_ROUTE_FOUND'
             
             # Verificar puertos individuales
             elif port_info['ports_found']:
                 for port in port_info['ports_found']:
-                    if port in [pol, pod]:
+                    if port in [pol_u, pod_u]:
                         validation['route_exists'] = True
                         validation['verification_status'] = 'PORT_FOUND'
     
