@@ -26,13 +26,6 @@ from .core import (
 #            CONFIGURACIÓN STREAMLIT
 ####################################################################
 
-st.set_page_config(
-    page_title="MSL LCL Marítimo - Sistema de Consultas",
-    page_icon="🚢",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 st.title("🚢 MSL LCL MARÍTIMO - Sistema de Consulta de Tarifas de Importación")  
 st.markdown("*Consulta tarifas LCL marítimas desde todo el mundo hacia Chile*")
 

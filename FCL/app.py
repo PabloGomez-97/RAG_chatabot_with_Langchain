@@ -26,13 +26,6 @@ from .core import (
 #            CONFIGURACIÓN STREAMLIT
 ####################################################################
 
-st.set_page_config(
-    page_title="FCL Marítimo - Sistema de Consultas",
-    page_icon="🚢",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 st.title("🚢 FCL MARÍTIMO - Sistema de Consulta de Tarifas de Contenedores")  
 st.markdown("*Consulta tarifas de contenedores FCL entre puertos POL → POD*")
 

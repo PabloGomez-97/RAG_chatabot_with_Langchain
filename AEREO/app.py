@@ -25,13 +25,6 @@ from .core import (
 #            CONFIGURACIÓN STREAMLIT
 ####################################################################
 
-st.set_page_config(
-    page_title="CRAFTTRANSWAY - Carga Aérea",
-    page_icon="✈️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 st.title("✈️ CRAFTTRANSWAY - Sistema de Consulta de Tarifas Aéreas")  
 st.markdown("*Consulta tarifas de carga aérea entre aeropuertos AOL → AOD*")
 
