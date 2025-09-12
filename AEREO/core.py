@@ -10,7 +10,7 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-from config import (
+from .config import (
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, OPENAI_API_KEY,
     get_air_freight_response_template, detect_air_freight_query_type, 
     extract_airports_from_query, get_airport_region, analyze_route_direction

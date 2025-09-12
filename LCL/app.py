@@ -8,13 +8,13 @@ from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
 # Importar módulos de LCL marítimo
-from config import (
+from .config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_lcl_maritime_query_type,
     extract_lcl_ports_from_query, get_lcl_port_region, analyze_lcl_route_direction,
     extract_region_from_query, normalize_port_name, matches_pod
 )
-from core import (
+from .core import (
     load_lcl_maritime_documents,
     create_lcl_maritime_chain,
     create_lcl_maritime_retriever,

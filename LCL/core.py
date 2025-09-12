@@ -11,7 +11,7 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
 
-from config import (
+from .config import (
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, OPENAI_API_KEY,
     get_lcl_maritime_response_template, detect_lcl_maritime_query_type, 
     extract_lcl_ports_from_query, get_lcl_port_region, analyze_lcl_route_direction,

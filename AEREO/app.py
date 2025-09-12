@@ -8,12 +8,12 @@ from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
 # Importar módulos de carga aérea
-from config import (
+from .config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_air_freight_query_type,
     extract_airports_from_query, get_airport_region, analyze_route_direction
 )
-from core import (
+from .core import (
     load_air_freight_documents,
     create_air_freight_chain,
     create_air_freight_retriever,

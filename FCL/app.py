@@ -8,13 +8,13 @@ from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 
 # Importar módulos de FCL marítimo
-from config import (
+from .config import (
     OPENAI_API_KEY, WELCOME_MESSAGE, OPENAI_MODELS, 
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, detect_maritime_fcl_query_type,
     extract_ports_from_query, get_port_region, analyze_maritime_route_direction,
     extract_container_type_from_query
 )
-from core import (
+from .core import (
     load_maritime_fcl_documents,
     create_maritime_fcl_chain,
     create_maritime_fcl_retriever,

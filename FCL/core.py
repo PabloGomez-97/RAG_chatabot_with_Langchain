@@ -10,7 +10,7 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-from config import (
+from .config import (
     TMP_DIR, LOCAL_VECTOR_STORE_DIR, OPENAI_API_KEY,
     get_maritime_fcl_response_template, detect_maritime_fcl_query_type, 
     extract_ports_from_query, get_port_region, analyze_maritime_route_direction,
