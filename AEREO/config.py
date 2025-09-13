@@ -17,19 +17,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Assistant language fixed to Spanish
 ASSISTANT_LANGUAGE = "spanish"
-WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas de carga aérea de CRAFTTRANSWAY.
-
-✈️ **SISTEMA CRAFTTRANSWAY - CONSULTAS AÉREAS:**
-- Consulta de tarifas entre aeropuertos (AOL → AOD)
-- Información de airlines y servicios disponibles
-- Tarifas mínimas y por kilogramo
-- Rutas de importación y exportación desde/hacia Chile
-
-💡 **Ejemplos de consultas:**
-- "¿Cuál es la tarifa de MIA a SCL?"
-- "¿Qué opciones hay desde Europa a Chile?"
-- "¿Cuánto cuesta enviar desde SCL a LIM?"
-- "¿Qué airlines vuelan de HKG a SCL?"
+WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas
 
 ⚠️ **IMPORTANTE:**
 Solo te daré información que esté realmente disponible en el tarifario de carga aérea.

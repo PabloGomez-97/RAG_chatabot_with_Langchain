@@ -17,24 +17,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Assistant language fixed to Spanish
 ASSISTANT_LANGUAGE = "spanish"
-WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas marítimas LCL (Less than Container Load) de MSL.
-
-🚢 **SISTEMA MSL LCL - IMPORTACIONES MARÍTIMAS:**
-- Consulta de tarifas entre puertos (POL → POD)
-- Cobertura mundial: América, Europa, Norteamérica, Asia
-- Tarifas por TON/M3 y mínimos
-- Rutas de importación hacia Chile
-- Agentes locales y tiempos de tránsito
-
-💡 **Ejemplos de consultas:**
-- "¿Cuál es la tarifa desde SANTOS a Chile?"
-- "¿Qué opciones hay desde Europa a San Antonio?"
-- "¿Cuánto cuesta desde MIAMI por tonelada?"
-- "¿Qué agentes tenemos en Asia?"
+WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas
 
 ⚠️ **IMPORTANTE:**
-Solo te daré información que esté realmente disponible en el tarifario LCL de MSL.
-Si una ruta no existe, te lo diré claramente.
+Solo te daré información que esté realmente disponible en el tarifario LCL de MSL. Si una ruta no existe, te lo diré claramente.
 """
 
 # Available OpenAI models

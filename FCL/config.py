@@ -17,24 +17,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Assistant language fixed to Spanish
 ASSISTANT_LANGUAGE = "spanish"
-WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas marítimas FCL (Full Container Load).
-
-🚢 **SISTEMA FCL MARÍTIMO - CONSULTAS DE CONTENEDORES:**
-- Consulta de tarifas entre puertos (POL → POD)
-- Información de carriers y servicios navieros
-- Tarifas por tipo de contenedor (20GP, 40GP, 40HQ, 40NOR)
-- Rutas de importación desde Asia hacia Sudamérica
-- Free time y condiciones especiales
-
-💡 **Ejemplos de consultas:**
-- "¿Cuál es la tarifa de SHANGHAI a SAI/VAL?"
-- "¿Qué opciones hay desde China a Chile?"
-- "¿Cuánto cuesta un contenedor 40HQ desde NINGBO a Chile?"
-- "¿Qué carriers operan desde BASE PORTS a SAI/VAL?"
+WELCOME_MESSAGE = """¡Hola! Soy tu asistente especializado en tarifas
 
 ⚠️ **IMPORTANTE:**
-Solo te daré información que esté realmente disponible en el tarifario FCL marítimo.
-Si una ruta no existe, te lo diré claramente.
+Solo te daré información que esté realmente disponible en el tarifario FCL marítimo. Si una ruta no existe, te lo diré claramente.
 """
 
 # Available OpenAI models

@@ -23,13 +23,6 @@ from .core import (
 )
 
 ####################################################################
-#            CONFIGURACIÓN STREAMLIT
-####################################################################
-
-st.title("🚢 FCL MARÍTIMO - Sistema de Consulta de Tarifas de Contenedores")  
-st.markdown("*Consulta tarifas de contenedores FCL entre puertos POL → POD*")
-
-####################################################################
 #            FUNCIONES PRINCIPALES
 ####################################################################
 
@@ -241,7 +234,7 @@ def enhanced_sidebar_maritime_fcl():
             return
 
     # Tabs para gestión
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Crear Sistema", "📂 Cargar", "📊 Estadísticas", "🧪 Ejemplos"])
+    tab2, tab1 = st.tabs(["📂 Cargar", "📁 Crear Sistema"])
 
     with tab1:
         st.markdown("### 📁 Crear Base de Datos FCL Marítimo")
@@ -285,47 +278,6 @@ def enhanced_sidebar_maritime_fcl():
         
         if st.button("📖 Cargar Base de Datos", type="primary"):
             load_existing_maritime_fcl_vectorstore()
-
-    with tab3:
-        st.markdown("### 📊 Estadísticas del Sistema")
-        
-        if hasattr(st.session_state, 'vector_store'):
-            try:
-                collection_count = st.session_state.vector_store._collection.count()
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("🚢 Rutas FCL", collection_count)
-                with col2:
-                    st.metric("🤖 Modelo", "gpt-4o")
-                with col3:
-                    st.metric("🎯 Precisión", "Máxima")
-                    
-                st.markdown("#### 📈 Estado del Sistema")
-                st.success("Sistema FCL marítimo activo")
-            except:
-                st.info("Carga una base de datos para ver estadísticas")
-        else:
-            st.info("No hay base de datos cargada")
-
-    with tab4:
-        st.markdown("### 🧪 Ejemplos de Consultas")
-        
-        ejemplos = [
-            "¿Cuál es la tarifa de SHANGHAI a SAI/VAL?",
-            "¿Qué opciones hay desde China a Chile?",
-            "¿Cuánto cuesta un contenedor 40HQ desde NINGBO?",
-            "¿Qué carriers operan desde BASE PORTS a SAI/VAL?",
-            "Tarifas de contenedores desde Asia a Chile",
-            "¿Hay rutas directas desde SINGAPORE?",
-            "Comparar precios de contenedores 20GP vs 40HQ",
-            "¿Cuál es el free time desde SHANGHAI?"
-        ]
-        
-        st.write("**💡 Prueba estas consultas:**")
-        for ejemplo in ejemplos:
-            if st.button(f"📝 {ejemplo}", key=f"ejemplo_{hash(ejemplo)}"):
-                st.session_state.ejemplo_selected = ejemplo
 
 def create_maritime_fcl_system():
     """Pipeline de creación del sistema FCL marítimo"""
@@ -515,11 +467,9 @@ def maritime_fcl_chatbot():
     # Header del sistema
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor de Tarifas FCL Marítimas")
+        st.subheader("💬 Consultor de Tarifas")
         if hasattr(st.session_state, 'chain'):
             st.success("✅ Sistema Activo")
-        else:
-            st.warning("📁 Crear/Cargar Sistema")
 
     # Manejo de ejemplos seleccionados
     if hasattr(st.session_state, 'ejemplo_selected'):
@@ -591,7 +541,7 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-    🚢 FCL Marítimo - Sistema de Consulta de Tarifas de Contenedores | POL → POD | Powered by LangChain & OpenAI
+    🚢 Sistema de Consulta de Tarifas de Contenedores | POL → POD | Powered by LangChain & OpenAI
     </div>
     """, unsafe_allow_html=True)
 

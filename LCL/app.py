@@ -23,13 +23,6 @@ from .core import (
 )
 
 ####################################################################
-#            CONFIGURACIÓN STREAMLIT
-####################################################################
-
-st.title("🚢 MSL LCL MARÍTIMO - Sistema de Consulta de Tarifas de Importación")  
-st.markdown("*Consulta tarifas LCL marítimas desde todo el mundo hacia Chile*")
-
-####################################################################
 #            FUNCIONES PRINCIPALES
 ####################################################################
 
@@ -90,152 +83,10 @@ def get_lcl_maritime_response(prompt):
             with st.chat_message("assistant"):
                 st.markdown(answer)
                 
-                # Mostrar métricas y análisis
-                display_lcl_maritime_metrics(validation, port_info, response.get("source_documents", []), region_requested)
-                
-                # Análisis detallado de fuentes
-                with st.expander("📋 **Análisis Detallado de Rutas LCL**"):
-                    display_lcl_route_analysis(response.get("source_documents", []), port_info)
-                
     except Exception as e:
         st.error(f"Error en consulta de LCL marítimo: {str(e)}")
         with st.expander("🔧 **Detalles técnicos del error**"):
             st.code(traceback.format_exc())
-
-def display_lcl_maritime_metrics(validation: dict, port_info: dict, source_docs: list, region_requested: str):
-    """Muestra métricas específicas de LCL marítimo"""
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if validation['route_exists']:
-            st.success("✅ **Ruta Disponible**")
-        else:
-            st.error("❌ **Ruta No Encontrada**")
-    
-    with col2:
-        verified_docs = sum(1 for doc in source_docs if doc.metadata.get('verification_status') == 'VERIFIED')
-        st.info(f"📄 **{verified_docs} Rutas Verificadas**")
-    
-    with col3:
-        if port_info['has_route_pattern']:
-            operation = analyze_lcl_route_direction(port_info['pol_detected'], port_info['pod_detected'])
-            st.info(f"🌍 **{operation.split(' hacia ')[0] if ' hacia ' in operation else operation}**")
-        else:
-            st.info("🔍 **Consulta General**")
-    
-    # Mostrar información regional
-    if region_requested != 'ALL':
-        st.info(f"🌍 **Región específica: {region_requested}**")
-    
-    # Mostrar distribución regional de resultados
-    if source_docs:
-        regional_count = {}
-        for doc in source_docs:
-            region = doc.metadata.get('region', 'Unknown')
-            regional_count[region] = regional_count.get(region, 0) + 1
-        
-        if len(regional_count) > 1:
-            with st.expander("🌍 **Distribución Regional de Resultados**"):
-                for region, count in regional_count.items():
-                    st.write(f"📍 {region}: {count} rutas")
-    
-    # Mostrar sugerencias si las hay
-    if validation.get('suggestions'):
-        with st.expander("💡 **Rutas Alternativas Disponibles**"):
-            for suggestion in validation['suggestions'][:5]:
-                parts = suggestion.split('_')
-                if len(parts) >= 3:
-                    pol, pod, region = parts[0], parts[1], parts[2]
-                    operation = analyze_lcl_route_direction(pol, pod)
-                    st.write(f"🚢 **{pol} → {pod}** ({region}) - {operation}")
-
-def display_lcl_route_analysis(sources: list, port_info: dict):
-    """Muestra análisis detallado de rutas LCL encontradas"""
-    
-    if not sources:
-        st.warning("⚠️ No se encontraron fuentes")
-        return
-    
-    # Filtrar documentos relevantes
-    relevant_docs = []
-    if port_info.get('has_route_pattern'):
-        # Buscar ruta específica
-        pol_target = normalize_port_name(port_info['pol_detected'], "pol") if port_info['pol_detected'] else None
-        pod_target = normalize_port_name(port_info['pod_detected'], "pod") if port_info['pod_detected'] else None
-
-        for doc in sources:
-            pol_doc = normalize_port_name(doc.metadata.get('pol', ''), "pol")
-            pod_doc = normalize_port_name(doc.metadata.get('pod', ''), "pod")
-            if pol_target and pod_target and pol_doc == pol_target and matches_pod(pod_target, pod_doc):
-                relevant_docs.append(doc)
-
-    
-    elif port_info.get('ports_found'):
-        ports_found_norm = [normalize_port_name(p, "any") for p in (port_info.get('ports_found') or [])]
-        for doc in sources:
-            pol_doc = normalize_port_name(doc.metadata.get('pol', ''), "pol")
-            pod_doc = normalize_port_name(doc.metadata.get('pod', ''), "pod")
-            if any( (p in {"SAN ANTONIO","VALPARAISO","SAI/VAP"} and matches_pod(p, pod_doc)) or     
-                    (p == pol_doc) or (p == pod_doc)
-                    for p in ports_found_norm ):
-                relevant_docs.append(doc)
-
-    else:
-        relevant_docs = sources[:10]  # Mostrar primeros 10 si es consulta general
-    
-    if relevant_docs:
-        st.write(f"**🔍 Análisis de {len(relevant_docs)} rutas LCL relevantes:**")
-        st.markdown("---")
-        
-        for i, doc in enumerate(relevant_docs[:5], 1):  # Limitar a 5 para no saturar
-            st.markdown(f"**Ruta {i}: {doc.metadata.get('pol', 'N/A')} → {doc.metadata.get('pod', 'N/A')} ({doc.metadata.get('region', 'N/A')})**")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(f"**POL:** {doc.metadata.get('pol', 'N/A')}")
-                st.write(f"**País:** {doc.metadata.get('country', 'N/A')}")
-                st.write(f"**POD:** {doc.metadata.get('pod', 'N/A')}")
-                st.write(f"**Región:** {doc.metadata.get('region', 'N/A')}")
-                st.write(f"**Compañía:** {doc.metadata.get('company', 'N/A')}")
-            
-            with col2:
-                st.write(f"**Agente:** {doc.metadata.get('agent', 'No especificado')}")
-                st.write(f"**Servicio:** {doc.metadata.get('service', 'No especificado')}")
-                st.write(f"**Tiempo Tránsito:** {doc.metadata.get('transit_time', 'No especificado')}")
-                st.write(f"**Frecuencia:** {doc.metadata.get('frequency', 'No especificado')}")
-                st.write(f"**Fila Excel:** {doc.metadata.get('row_number', 'N/A')}")
-            
-            if i < len(relevant_docs[:5]):  # No agregar línea después del último
-                st.markdown("---")
-    else:
-        # Mostrar análisis general de todas las fuentes
-        analysis = analyze_lcl_maritime_sources(sources)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.write("**Puertos POL disponibles:**")
-            for pol in sorted(list(analysis.get('pol_ports', set())))[:5]:
-                region = get_lcl_port_region(pol)
-                st.write(f"🚢 {pol} ({region})")
-        
-        with col2:
-            st.write("**Puertos POD disponibles:**")
-            for pod in sorted(list(analysis.get('pod_ports', set()))):
-                region = get_lcl_port_region(pod)
-                st.write(f"🏢 {pod} ({region})")
-        
-        with col3:
-            st.write("**Distribución regional:**")
-            for region, count in analysis.get('regional_distribution', {}).items():
-                st.write(f"🌍 {region}: {count}")
-            
-            if analysis.get('companies'):
-                st.write("**Compañías:**")
-                for company in sorted(list(analysis.get('companies', set()))):
-                    st.write(f"🏢 {company}")
 
 def enhanced_sidebar_lcl_maritime():
     """Interfaz lateral para LCL marítimo"""
@@ -259,7 +110,7 @@ def enhanced_sidebar_lcl_maritime():
             return
 
     # Tabs para gestión
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Crear Sistema", "📂 Cargar", "📊 Estadísticas", "🧪 Ejemplos"])
+    tab2, tab1 = st.tabs(["📂 Cargar", "📁 Crear Sistema"])
 
     with tab1:
         st.markdown("### 📁 Crear Base de Datos LCL Marítimo")
@@ -303,47 +154,6 @@ def enhanced_sidebar_lcl_maritime():
         
         if st.button("📖 Cargar Base de Datos", type="primary"):
             load_existing_lcl_maritime_vectorstore()
-
-    with tab3:
-        st.markdown("### 📊 Estadísticas del Sistema")
-        
-        if hasattr(st.session_state, 'vector_store'):
-            try:
-                collection_count = st.session_state.vector_store._collection.count()
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("🚢 Rutas LCL", collection_count)
-                with col2:
-                    st.metric("🤖 Modelo", "gpt-4o")
-                with col3:
-                    st.metric("🎯 Precisión", "Máxima")
-                    
-                st.markdown("#### 📈 Estado del Sistema")
-                st.success("Sistema LCL marítimo activo")
-            except:
-                st.info("Carga una base de datos para ver estadísticas")
-        else:
-            st.info("No hay base de datos cargada")
-
-    with tab4:
-        st.markdown("### 🧪 Ejemplos de Consultas")
-        
-        ejemplos = [
-            "¿Cuál es la tarifa desde SANTOS a Chile?",
-            "¿Qué opciones hay desde Europa a San Antonio?",
-            "¿Cuánto cuesta desde MIAMI por tonelada?",
-            "¿Qué agentes tenemos en Asia?",
-            "Tarifas desde Argentina a Chile",
-            "¿Hay rutas directas desde HAMBURG?",
-            "Comparar precios América vs Europa",
-            "¿Cuál es el tiempo de tránsito desde SINGAPORE?"
-        ]
-        
-        st.write("**💡 Prueba estas consultas:**")
-        for ejemplo in ejemplos:
-            if st.button(f"📝 {ejemplo}", key=f"ejemplo_{hash(ejemplo)}"):
-                st.session_state.ejemplo_selected = ejemplo
 
 def create_lcl_maritime_system():
     """Pipeline de creación del sistema LCL marítimo"""
@@ -532,11 +342,9 @@ def lcl_maritime_chatbot():
     # Header del sistema
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor de Tarifas LCL Marítimas MSL")
+        st.subheader("💬 Consultor de Tarifas")
         if hasattr(st.session_state, 'chain'):
             st.success("✅ Sistema Activo")
-        else:
-            st.warning("📁 Crear/Cargar Sistema")
 
     # Manejo de ejemplos seleccionados
     if hasattr(st.session_state, 'ejemplo_selected'):

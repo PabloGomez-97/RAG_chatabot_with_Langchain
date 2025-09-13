@@ -21,12 +21,6 @@ from .core import (
     analyze_air_freight_sources
 )
 
-####################################################################
-#            CONFIGURACIÓN STREAMLIT
-####################################################################
-
-st.title("✈️ CRAFTTRANSWAY - Sistema de Consulta de Tarifas Aéreas")  
-st.markdown("*Consulta tarifas de carga aérea entre aeropuertos AOL → AOD*")
 
 ####################################################################
 #            FUNCIONES PRINCIPALES
@@ -226,7 +220,7 @@ def enhanced_sidebar_air_freight():
             return
 
     # Tabs para gestión
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Crear Sistema", "📂 Cargar", "📊 Estadísticas", "🧪 Ejemplos"])
+    tab2, tab1 = st.tabs(["📂 Cargar", "📁 Crear Sistema"])
 
     with tab1:
         st.markdown("### 📁 Crear Base de Datos de Carga Aérea")
@@ -270,47 +264,6 @@ def enhanced_sidebar_air_freight():
         
         if st.button("📖 Cargar Base de Datos", type="primary"):
             load_existing_air_freight_vectorstore()
-
-    with tab3:
-        st.markdown("### 📊 Estadísticas del Sistema")
-        
-        if hasattr(st.session_state, 'vector_store'):
-            try:
-                collection_count = st.session_state.vector_store._collection.count()
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("✈️ Rutas Aéreas", collection_count)
-                with col2:
-                    st.metric("🤖 Modelo", "gpt-4o")
-                with col3:
-                    st.metric("🎯 Precisión", "Máxima")
-                    
-                st.markdown("#### 📈 Estado del Sistema")
-                st.success("Sistema de carga aérea activo")
-            except:
-                st.info("Carga una base de datos para ver estadísticas")
-        else:
-            st.info("No hay base de datos cargada")
-
-    with tab4:
-        st.markdown("### 🧪 Ejemplos de Consultas")
-        
-        ejemplos = [
-            "¿Cuál es la tarifa de MIA a SCL?",
-            "¿Qué opciones hay desde Europa a Chile?",
-            "¿Cuánto cuesta enviar desde SCL a LIM?",
-            "¿Qué airlines vuelan de HKG a SCL?",
-            "Tarifas desde Asia a Chile",
-            "¿Hay rutas directas desde Madrid?",
-            "Comparar precios CRAFT vs TRANSWAY",
-            "¿Qué aeropuertos de origen hay disponibles?"
-        ]
-        
-        st.write("**💡 Prueba estas consultas:**")
-        for ejemplo in ejemplos:
-            if st.button(f"📝 {ejemplo}", key=f"ejemplo_{hash(ejemplo)}"):
-                st.session_state.ejemplo_selected = ejemplo
 
 def create_air_freight_system():
     """Pipeline de creación del sistema de carga aérea"""
@@ -486,11 +439,7 @@ def air_freight_chatbot():
     # Header del sistema
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.subheader("💬 Consultor de Tarifas Aéreas CRAFTTRANSWAY")
-        if hasattr(st.session_state, 'chain'):
-            st.success("✅ Sistema Activo")
-        else:
-            st.warning("📁 Crear/Cargar Sistema")
+        st.subheader("💬 Consultor de Tarifas")
 
     # Manejo de ejemplos seleccionados
     if hasattr(st.session_state, 'ejemplo_selected'):
@@ -562,7 +511,7 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-    ✈️ CRAFTTRANSWAY - Sistema de Consulta de Tarifas Aéreas | AOL → AOD | Powered by LangChain & OpenAI
+    ✈️ Sistema de Consulta de Tarifas Aéreas | AOL → AOD | Powered by LangChain & OpenAI
     </div>
     """, unsafe_allow_html=True)
 

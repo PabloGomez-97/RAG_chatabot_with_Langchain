@@ -375,7 +375,7 @@ def run_lcl_system():
         from LCL.app import main as lcl_main
         
         # Navbar de navegación
-        show_navbar("LCL MARÍTIMO MSL", "🌊")
+        show_navbar("LCL MARÍTIMO", "🌊")
         
         # Ejecutar sistema LCL
         lcl_main()
@@ -385,27 +385,120 @@ def run_lcl_system():
         st.info("Asegúrate de que los archivos del sistema LCL estén en la carpeta LCL/")
 
 def show_navbar(system_name, icon):
-    """Muestra navbar de navegación con botón de regreso"""
-    col1, col2, col3 = st.columns([1, 6, 1])
+    """Muestra navbar de navegación con botón de regreso mejorado"""
     
-    with col1:
-        if st.button("⬅️ Volver al Inicio", key="back_home"):
-            if 'selected_system' in st.session_state:
-                del st.session_state.selected_system
-            st.rerun()
+    # CSS adicional para el botón mejorado
+    st.markdown("""
+    <style>
+        .back-button {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white !important;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin: 10px 0;
+        }
+        
+        .back-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        }
+        
+        .back-button:active {
+            transform: translateY(0px);
+        }
+        
+        .navbar-container {
+            background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 50%, #06b6d4 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+        
+        .navbar-title {
+            color: white;
+            text-align: center;
+            margin: 0;
+            font-size: 2.2rem;
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .navbar-grid {
+            display: grid;
+            grid-template-columns: 1fr 3fr 1fr;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .navbar-title {
+                font-size: 1.6rem;
+            }
+            .back-button {
+                padding: 10px 18px;
+                font-size: 14px;
+            }
+            .navbar-container {
+                padding: 15px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .navbar-title {
+                font-size: 1.3rem;
+            }
+            .back-button {
+                padding: 8px 15px;
+                font-size: 13px;
+            }
+            .navbar-grid {
+                grid-template-columns: 1fr;
+                text-align: center;
+                gap: 15px;
+            }
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Contenedor principal del navbar
+    st.markdown(f"""
+    <div class="navbar-container">
+        <div class="navbar-grid">
+            <div></div>
+            <div>
+                <h1 class="navbar-title">{icon} {system_name}</h1>
+            </div>
+            <div></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Botón de regreso mejorado centrado
+    col1, col2, col3 = st.columns([2, 1, 2])
     
     with col2:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 0.5rem;">
-            <h2>{icon} {system_name}</h2>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.write("")  # Espacio vacío para equilibrar
+        if st.button("🏠 Volver al Inicio", key="back_home", 
+                    use_container_width=True, type="secondary"):
+            clear_all_chat_state()  # Limpiar estado al volver
+            if 'selected_system' in st.session_state:
+                del st.session_state.selected_system
+            if 'previous_system' in st.session_state:
+                del st.session_state.previous_system
+            st.rerun()
     
     st.markdown("---")
-
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
@@ -417,7 +510,24 @@ def main():
     if 'selected_system' not in st.session_state:
         st.session_state.selected_system = None
     
-    # Routing basado en el sistema seleccionado
+    # NUEVA FUNCIONALIDAD: Detectar cambio de sistema
+    if 'previous_system' not in st.session_state:
+        st.session_state.previous_system = None
+    
+    current_system = st.session_state.selected_system
+    
+    # Si cambió el sistema, limpiar todo el estado relacionado con chatbots
+    if (st.session_state.previous_system is not None and 
+        current_system != st.session_state.previous_system):
+        
+        clear_all_chat_state()  # Llamar a la función de limpieza
+        st.session_state.previous_system = current_system
+        st.rerun()  # Forzar recarga para aplicar cambios
+    
+    # Actualizar sistema anterior para la próxima vez
+    st.session_state.previous_system = current_system
+    
+    # El resto del código sigue igual
     if st.session_state.selected_system == "AEREO":
         run_aereo_system()
     elif st.session_state.selected_system == "FCL":
@@ -426,6 +536,38 @@ def main():
         run_lcl_system()
     else:
         show_home()
+
+def clear_all_chat_state():
+    """Limpia todo el estado relacionado con chatbots"""
+    
+    # Lista de variables que queremos limpiar al cambiar de sistema
+    keys_to_clear = [
+        'messages',           # Historial del chat
+        'memory',            # Memoria de la conversación
+        'chain',             # El sistema de preguntas y respuestas
+        'retriever',         # El buscador de documentos
+        'vector_store',      # La base de datos de vectores
+        'uploaded_file_list', # Archivos que subiste
+        'vector_store_name', # Nombre de la base de datos
+        'selected_vectorstore_name', # Base de datos seleccionada
+        'ejemplo_selected',  # Si seleccionaste algún ejemplo
+        'initialized'        # Flag de inicialización
+    ]
+    
+    # Eliminar cada una de estas variables del estado
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    
+    # También limpiar variables que empiecen con prefijos de los sistemas
+    all_keys = list(st.session_state.keys())
+    system_prefixes = ['aereo_', 'fcl_', 'lcl_', 'air_', 'maritime_']
+    
+    for key in all_keys:
+        if any(key.startswith(prefix) for prefix in system_prefixes):
+            del st.session_state[key]
+    
+    print("[CLEANUP] Estado del chat limpiado al cambiar sistema")
 
 if __name__ == "__main__":
     main()
