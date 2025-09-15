@@ -8,227 +8,337 @@ from pathlib import Path
 
 st.set_page_config(
     page_title="Sistema de Consulta de Tarifas",
-    page_icon="🌐",
+    page_icon="🌍",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# CSS personalizado para el navbar y responsive design
+# CSS personalizado más sobrio y completamente responsive
 st.markdown("""
 <style>
+    /* Ocultar elementos de Streamlit por defecto */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Contenedor principal responsive */
+    .block-container {
+        padding: 1rem;
+        max-width: 100%;
+    }
+    
+    @media (min-width: 768px) {
+        .block-container {
+            padding: 2rem;
+        }
+    }
+    
+    /* Navbar simple y sobrio */
     .navbar {
-        background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 50%, #06b6d4 100%);
-        padding: 1rem 2rem;
-        border-radius: 10px;
+        background: #2c3e50;
+        padding: 1.5rem;
+        border-radius: 8px;
         margin-bottom: 2rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        text-align: center;
     }
     
     .navbar h1 {
         color: white;
-        text-align: center;
         margin: 0;
-        font-size: 2rem;
-        font-weight: 600;
+        font-size: 1.8rem;
+        font-weight: 500;
     }
     
-    /* Responsive para navbar */
     @media (max-width: 768px) {
-        .navbar h1 {
-            font-size: 1.5rem;
-        }
         .navbar {
-            padding: 0.8rem 1rem;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .navbar h1 {
+            font-size: 1.4rem;
         }
     }
     
+    @media (max-width: 480px) {
+        .navbar {
+            padding: 0.8rem;
+            margin-bottom: 1rem;
+        }
+        .navbar h1 {
+            font-size: 1.2rem;
+        }
+    }
+    
+    /* Tarjetas del sistema - completamente responsive */
     .system-card {
         background: white;
-        border-radius: 15px;
+        border-radius: 12px;
         padding: 1.5rem;
-        margin: 0.5rem;
-        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
-        border: 1px solid #e5e7eb;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+        border: 1px solid #e9ecef;
         transition: all 0.3s ease;
         text-align: center;
-        min-height: 280px;
+        height: 100%;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        width: 100%;
-        box-sizing: border-box;
-    }
-    
-    /* Responsive para tarjetas */
-    @media (max-width: 768px) {
-        .system-card {
-            margin: 0.5rem 0;
-            padding: 1.2rem;
-            min-height: 250px;
-        }
-    }
-    
-    @media (max-width: 480px) {
-        .system-card {
-            padding: 1rem;
-            min-height: 220px;
-        }
     }
     
     .system-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
     }
     
-    .system-icon {
-        font-size: 3.5rem;
-        margin-bottom: 0.8rem;
-    }
-    
-    /* Responsive para iconos */
-    @media (max-width: 768px) {
-        .system-icon {
-            font-size: 3rem;
-            margin-bottom: 0.6rem;
+    @media (max-width: 1024px) {
+        .system-card {
+            padding: 1.2rem;
+            margin-bottom: 1.5rem;
         }
     }
     
-    @media (max-width: 480px) {
+    @media (max-width: 768px) {
+        .system-card {
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+    }
+    
+    /* Iconos responsive */
+    .system-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        display: block;
+    }
+    
+    @media (max-width: 768px) {
         .system-icon {
             font-size: 2.5rem;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.8rem;
         }
     }
     
-    .system-title {
-        font-size: 1.6rem;
-        font-weight: 700;
-        margin-bottom: 0.8rem;
-        color: #1f2937;
-        line-height: 1.2;
+    @media (max-width: 480px) {
+        .system-icon {
+            font-size: 2rem;
+            margin-bottom: 0.6rem;
+        }
     }
     
-    /* Responsive para títulos */
+    /* Títulos responsive */
+    .system-title {
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-bottom: 0.8rem;
+        color: #2c3e50;
+        line-height: 1.3;
+    }
+    
     @media (max-width: 768px) {
         .system-title {
-            font-size: 1.4rem;
+            font-size: 1.2rem;
             margin-bottom: 0.6rem;
         }
     }
     
     @media (max-width: 480px) {
         .system-title {
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             margin-bottom: 0.5rem;
         }
     }
     
+    /* Descripciones responsive */
     .system-description {
-        color: #6b7280;
-        font-size: 0.95rem;
-        line-height: 1.4;
+        color: #6c757d;
+        font-size: 0.9rem;
+        line-height: 1.5;
         margin-bottom: 1rem;
         flex-grow: 1;
-        hyphens: auto;
-        word-wrap: break-word;
     }
     
-    /* Responsive para descripciones */
     @media (max-width: 768px) {
         .system-description {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             margin-bottom: 0.8rem;
         }
     }
     
     @media (max-width: 480px) {
         .system-description {
-            font-size: 0.85rem;
-            margin-bottom: 0.7rem;
+            font-size: 0.8rem;
+            margin-bottom: 0.6rem;
         }
     }
     
+    /* Lista de características responsive */
     .feature-list {
         text-align: left;
-        margin: 0.8rem 0;
+        margin: 1rem 0;
     }
     
     .feature-item {
-        color: #059669;
-        font-size: 0.85rem;
-        margin: 0.25rem 0;
-        line-height: 1.3;
+        color: #28a745;
+        font-size: 0.8rem;
+        margin: 0.3rem 0;
+        line-height: 1.4;
+        display: flex;
+        align-items: center;
     }
     
-    /* Responsive para features */
     @media (max-width: 768px) {
         .feature-item {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
+            margin: 0.25rem 0;
         }
     }
     
     @media (max-width: 480px) {
         .feature-item {
-            font-size: 0.75rem;
-        }
-    }
-    
-    /* Asegurar que las columnas de Streamlit sean responsive */
-    .block-container {
-        padding: 1rem 2rem;
-        max-width: 100%;
-    }
-    
-    @media (max-width: 768px) {
-        .block-container {
-            padding: 0.5rem 1rem;
+            font-size: 0.7rem;
+            margin: 0.2rem 0;
         }
     }
     
     /* Botones responsive */
     .stButton > button {
         width: 100%;
-        height: 50px;
-        font-weight: 600;
+        height: 48px;
+        font-weight: 500;
         border-radius: 8px;
         transition: all 0.3s ease;
+        border: none;
+    }
+    
+    @media (max-width: 768px) {
+        .stButton > button {
+            height: 44px;
+            font-size: 0.9rem;
+        }
     }
     
     @media (max-width: 480px) {
         .stButton > button {
-            height: 45px;
-            font-size: 0.9rem;
+            height: 40px;
+            font-size: 0.85rem;
         }
     }
     
-    /* Información adicional responsive */
-    .stAlert {
-        margin: 0.5rem 0;
+    /* Grid responsive para columnas */
+    .responsive-grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1fr;
     }
     
-    @media (max-width: 768px) {
-        .stAlert {
-            font-size: 0.9rem;
+    @media (min-width: 768px) {
+        .responsive-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
         }
     }
     
-    /* Ajustes para el texto de selección */
+    @media (min-width: 1024px) {
+        .responsive-grid {
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+    }
+    
+    /* Títulos principales responsive */
     h3 {
-        margin-bottom: 2rem !important;
         text-align: center;
+        margin: 1.5rem 0 2rem 0 !important;
+        color: #2c3e50;
+        font-weight: 500;
     }
     
     @media (max-width: 768px) {
         h3 {
-            font-size: 1.3rem !important;
-            margin-bottom: 1.5rem !important;
+            font-size: 1.2rem !important;
+            margin: 1rem 0 1.5rem 0 !important;
         }
     }
     
     @media (max-width: 480px) {
         h3 {
             font-size: 1.1rem !important;
-            margin-bottom: 1rem !important;
+            margin: 0.8rem 0 1rem 0 !important;
+        }
+    }
+    
+    /* Información adicional responsive */
+    .stAlert {
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+    }
+    
+    @media (max-width: 768px) {
+        .stAlert {
+            font-size: 0.85rem;
+            margin: 0.3rem 0;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .stAlert {
+            font-size: 0.8rem;
+            margin: 0.2rem 0;
+        }
+    }
+    
+    /* Navbar de navegación interno más sobrio */
+    .navbar-container {
+        background: #34495e;
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    
+    .navbar-title {
+        color: white;
+        text-align: center;
+        margin: 0;
+        font-size: 1.6rem;
+        font-weight: 500;
+    }
+    
+    @media (max-width: 768px) {
+        .navbar-container {
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .navbar-title {
+            font-size: 1.3rem;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .navbar-container {
+            padding: 0.8rem;
+        }
+        .navbar-title {
+            font-size: 1.1rem;
+        }
+    }
+    
+    /* Botón de regreso más sobrio */
+    .back-button-container {
+        text-align: center;
+        margin: 1rem 0;
+    }
+    
+    /* Asegurar que las columnas de Streamlit sean responsive */
+    @media (max-width: 768px) {
+        .stColumns {
+            flex-direction: column;
+        }
+        
+        .stColumn {
+            width: 100% !important;
+            margin-bottom: 1rem;
         }
     }
 </style>
@@ -241,17 +351,17 @@ st.markdown("""
 def show_home():
     """Muestra la página principal con selección de sistemas"""
     
-    # Header principal
+    # Header principal más sobrio
     st.markdown("""
     <div class="navbar">
-        <h1>🌐 Sistema Integral de Consulta de Tarifas</h1>
+        <h1>🌍 Sistema de Consulta de Tarifas</h1>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("### Selecciona el tipo de transporte para consultar tarifas:")
     
-    # Layout de 3 columnas para los sistemas
-    col1, col2, col3 = st.columns(3)
+    # Layout responsive - las columnas se adaptan automáticamente
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
         st.markdown("""
@@ -322,18 +432,19 @@ def show_home():
             st.session_state.selected_system = "LCL"
             st.rerun()
     
-    # Información adicional
+    # Información adicional responsive
     st.markdown("---")
     
-    col1, col2, col3 = st.columns(3)
+    # Usar flex en lugar de columnas para mejor responsive
+    info_col1, info_col2, info_col3 = st.columns([1, 1, 1])
     
-    with col1:
+    with info_col1:
         st.info("**CARGA AÉREA** - Para envíos urgentes y mercancías de alto valor")
     
-    with col2:
+    with info_col2:
         st.info("**FCL MARÍTIMO** - Para grandes volúmenes que llenan contenedores completos")
     
-    with col3:
+    with info_col3:
         st.info("**LCL MARÍTIMO** - Para cargas pequeñas que se consolidan con otros envíos")
 
 def run_aereo_system():
@@ -342,7 +453,7 @@ def run_aereo_system():
         # Importar y ejecutar el sistema aéreo
         from AEREO.app import main as aereo_main
         
-        # Navbar de navegación
+        # Navbar de navegación más sobrio
         show_navbar("CARGA AÉREA", "✈️")
         
         # Ejecutar sistema aéreo
@@ -358,7 +469,7 @@ def run_fcl_system():
         # Importar y ejecutar el sistema FCL
         from FCL.app import main as fcl_main
         
-        # Navbar de navegación
+        # Navbar de navegación más sobrio
         show_navbar("FCL MARÍTIMO", "🚢")
         
         # Ejecutar sistema FCL
@@ -374,7 +485,7 @@ def run_lcl_system():
         # Importar y ejecutar el sistema LCL
         from LCL.app import main as lcl_main
         
-        # Navbar de navegación
+        # Navbar de navegación más sobrio
         show_navbar("LCL MARÍTIMO", "🌊")
         
         # Ejecutar sistema LCL
@@ -385,108 +496,17 @@ def run_lcl_system():
         st.info("Asegúrate de que los archivos del sistema LCL estén en la carpeta LCL/")
 
 def show_navbar(system_name, icon):
-    """Muestra navbar de navegación con botón de regreso mejorado"""
+    """Muestra navbar de navegación más sobrio y responsive"""
     
-    # CSS adicional para el botón mejorado
-    st.markdown("""
-    <style>
-        .back-button {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            color: white !important;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 25px;
-            font-weight: 600;
-            font-size: 16px;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
-            transition: all 0.3s ease;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            margin: 10px 0;
-        }
-        
-        .back-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
-            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-        }
-        
-        .back-button:active {
-            transform: translateY(0px);
-        }
-        
-        .navbar-container {
-            background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 50%, #06b6d4 100%);
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-        }
-        
-        .navbar-title {
-            color: white;
-            text-align: center;
-            margin: 0;
-            font-size: 2.2rem;
-            font-weight: 700;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        
-        .navbar-grid {
-            display: grid;
-            grid-template-columns: 1fr 3fr 1fr;
-            align-items: center;
-            gap: 20px;
-        }
-        
-        @media (max-width: 768px) {
-            .navbar-title {
-                font-size: 1.6rem;
-            }
-            .back-button {
-                padding: 10px 18px;
-                font-size: 14px;
-            }
-            .navbar-container {
-                padding: 15px;
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .navbar-title {
-                font-size: 1.3rem;
-            }
-            .back-button {
-                padding: 8px 15px;
-                font-size: 13px;
-            }
-            .navbar-grid {
-                grid-template-columns: 1fr;
-                text-align: center;
-                gap: 15px;
-            }
-        }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Contenedor principal del navbar
+    # Navbar más simple y sobrio
     st.markdown(f"""
     <div class="navbar-container">
-        <div class="navbar-grid">
-            <div></div>
-            <div>
-                <h1 class="navbar-title">{icon} {system_name}</h1>
-            </div>
-            <div></div>
-        </div>
+        <h1 class="navbar-title">{icon} {system_name}</h1>
     </div>
     """, unsafe_allow_html=True)
     
-    # Botón de regreso mejorado centrado
-    col1, col2, col3 = st.columns([2, 1, 2])
+    # Botón de regreso centrado y más sobrio
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col2:
         if st.button("🏠 Volver al Inicio", key="back_home", 
@@ -499,6 +519,7 @@ def show_navbar(system_name, icon):
             st.rerun()
     
     st.markdown("---")
+
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
