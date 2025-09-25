@@ -2,12 +2,27 @@ import streamlit as st
 import sys
 from pathlib import Path
 
+# Agregar las rutas del backend y frontend al path
+current_dir = Path(__file__).resolve().parent
+backend_dir = current_dir / "backend"
+frontend_dir = current_dir / "frontend"
+
+sys.path.insert(0, str(backend_dir))
+sys.path.insert(0, str(frontend_dir))
+
+# Imports del frontend
+from frontend.components.navbar import show_navbar
+from frontend.components.sidebar import show_home_selection
+from frontend.pages.aereo_page import render_aereo_page
+from frontend.pages.fcl_page import render_fcl_page
+from frontend.pages.lcl_page import render_lcl_page
+
 ####################################################################
 #            CONFIGURACIÓN PRINCIPAL
 ####################################################################
 
 st.set_page_config(
-    page_title="Sistema de Consulta de Tarifas",
+    page_title="Sistema de Consulta de Tarifas - Seemann Group",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -348,184 +363,49 @@ st.markdown("""
 #            FUNCIONES PRINCIPALES
 ####################################################################
 
-def show_home():
-    """Muestra la página principal con selección de sistemas"""
-    
-    # Header principal más sobrio
-    st.markdown("""
-    <div class="navbar">
-        <h1>🌍 Sistema de Consulta de Tarifas</h1>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("### Selecciona el tipo de transporte para consultar tarifas:")
-    
-    # Layout responsive - las columnas se adaptan automáticamente
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col1:
-        st.markdown("""
-        <div class="system-card">
-            <div>
-                <div class="system-icon">✈️</div>
-                <div class="system-title">CARGA AÉREA</div>
-                <div class="system-description">
-                    Sistema de consulta de tarifas de carga aérea CRAFTTRANSWAY
-                </div>
-                <div class="feature-list">
-                    <div class="feature-item">✓ Tarifas AOL → AOD</div>
-                    <div class="feature-item">✓ Múltiples airlines</div>
-                    <div class="feature-item">✓ Precios por KG y mínimos</div>
-                    <div class="feature-item">✓ Rutas globales</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚀 ACCEDER A CARGA AÉREA", key="aereo", use_container_width=True, type="primary"):
-            st.session_state.selected_system = "AEREO"
-            st.rerun()
-    
-    with col2:
-        st.markdown("""
-        <div class="system-card">
-            <div>
-                <div class="system-icon">🚢</div>
-                <div class="system-title">FCL MARÍTIMO</div>
-                <div class="system-description">
-                    Sistema de consulta de tarifas de contenedores completos
-                </div>
-                <div class="feature-list">
-                    <div class="feature-item">✓ Contenedores 20GP, 40GP, 40HQ</div>
-                    <div class="feature-item">✓ Rutas POL → POD</div>
-                    <div class="feature-item">✓ Free time incluido</div>
-                    <div class="feature-item">✓ Múltiples carriers</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚀 ACCEDER A FCL MARÍTIMO", key="fcl", use_container_width=True, type="primary"):
-            st.session_state.selected_system = "FCL"
-            st.rerun()
-    
-    with col3:
-        st.markdown("""
-        <div class="system-card">
-            <div>
-                <div class="system-icon">🌊</div>
-                <div class="system-title">LCL MARÍTIMO</div>
-                <div class="system-description">
-                    Sistema MSL de consulta de tarifas de carga consolidada
-                </div>
-                <div class="feature-list">
-                    <div class="feature-item">✓ Tarifas TON/M3</div>
-                    <div class="feature-item">✓ Cobertura mundial</div>
-                    <div class="feature-item">✓ Agentes locales</div>
-                    <div class="feature-item">✓ Importaciones a Chile</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚀 ACCEDER A LCL MARÍTIMO", key="lcl", use_container_width=True, type="primary"):
-            st.session_state.selected_system = "LCL"
-            st.rerun()
-    
-    # Información adicional responsive
-    st.markdown("---")
-    
-    # Usar flex en lugar de columnas para mejor responsive
-    info_col1, info_col2, info_col3 = st.columns([1, 1, 1])
-    
-    with info_col1:
-        st.info("**CARGA AÉREA** - Para envíos urgentes y mercancías de alto valor")
-    
-    with info_col2:
-        st.info("**FCL MARÍTIMO** - Para grandes volúmenes que llenan contenedores completos")
-    
-    with info_col3:
-        st.info("**LCL MARÍTIMO** - Para cargas pequeñas que se consolidan con otros envíos")
-
 def run_aereo_system():
     """Ejecuta el sistema de carga aérea"""
     try:
-        # Importar y ejecutar el sistema aéreo
-        from AEREO.app import main as aereo_main
+        # Navbar de navegación
+        show_navbar("CARGA AÉREA - SEEMANN GROUP", "✈️")
         
-        # Navbar de navegación más sobrio
-        show_navbar("CARGA AÉREA", "✈️")
+        # Renderizar página aérea
+        render_aereo_page()
         
-        # Ejecutar sistema aéreo
-        aereo_main()
-        
-    except ImportError as e:
-        st.error(f"Error importando sistema aéreo: {e}")
-        st.info("Asegúrate de que los archivos del sistema aéreo estén en la carpeta AEREO/")
+    except Exception as e:
+        st.error(f"Error ejecutando sistema aéreo: {e}")
+        st.info("Verifica que todos los archivos del backend estén correctamente configurados")
 
 def run_fcl_system():
     """Ejecuta el sistema FCL marítimo"""
     try:
-        # Importar y ejecutar el sistema FCL
-        from FCL.app import main as fcl_main
+        # Navbar de navegación
+        show_navbar("FCL MARÍTIMO - SEEMANN GROUP", "🚢")
         
-        # Navbar de navegación más sobrio
-        show_navbar("FCL MARÍTIMO", "🚢")
+        # Renderizar página FCL
+        render_fcl_page()
         
-        # Ejecutar sistema FCL
-        fcl_main()
-        
-    except ImportError as e:
-        st.error(f"Error importando sistema FCL: {e}")
-        st.info("Asegúrate de que los archivos del sistema FCL estén en la carpeta FCL/")
+    except Exception as e:
+        st.error(f"Error ejecutando sistema FCL: {e}")
 
 def run_lcl_system():
     """Ejecuta el sistema LCL marítimo"""
     try:
-        # Importar y ejecutar el sistema LCL
-        from LCL.app import main as lcl_main
+        # Navbar de navegación
+        show_navbar("LCL MARÍTIMO - SEEMANN GROUP", "🌊")
         
-        # Navbar de navegación más sobrio
-        show_navbar("LCL MARÍTIMO", "🌊")
+        # Renderizar página LCL
+        render_lcl_page()
         
-        # Ejecutar sistema LCL
-        lcl_main()
-        
-    except ImportError as e:
-        st.error(f"Error importando sistema LCL: {e}")
-        st.info("Asegúrate de que los archivos del sistema LCL estén en la carpeta LCL/")
-
-def show_navbar(system_name, icon):
-    """Muestra navbar de navegación más sobrio y responsive"""
-    
-    # Navbar más simple y sobrio
-    st.markdown(f"""
-    <div class="navbar-container">
-        <h1 class="navbar-title">{icon} {system_name}</h1>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Botón de regreso centrado y más sobrio
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col2:
-        if st.button("🏠 Volver al Inicio", key="back_home", 
-                    use_container_width=True, type="secondary"):
-            clear_all_chat_state()  # Limpiar estado al volver
-            if 'selected_system' in st.session_state:
-                del st.session_state.selected_system
-            if 'previous_system' in st.session_state:
-                del st.session_state.previous_system
-            st.rerun()
-    
-    st.markdown("---")
+    except Exception as e:
+        st.error(f"Error ejecutando sistema LCL: {e}")
 
 ####################################################################
 #            FUNCIÓN PRINCIPAL
 ####################################################################
 
 def main():
-    """Función principal del dashboard"""
+    """Función principal del dashboard de Seemann Group"""
     
     # Inicializar session state
     if 'selected_system' not in st.session_state:
@@ -548,7 +428,7 @@ def main():
     # Actualizar sistema anterior para la próxima vez
     st.session_state.previous_system = current_system
     
-    # El resto del código sigue igual
+    # Enrutamiento principal
     if st.session_state.selected_system == "AEREO":
         run_aereo_system()
     elif st.session_state.selected_system == "FCL":
@@ -556,7 +436,7 @@ def main():
     elif st.session_state.selected_system == "LCL":
         run_lcl_system()
     else:
-        show_home()
+        show_home_selection()
 
 def clear_all_chat_state():
     """Limpia todo el estado relacionado con chatbots"""
@@ -588,7 +468,7 @@ def clear_all_chat_state():
         if any(key.startswith(prefix) for prefix in system_prefixes):
             del st.session_state[key]
     
-    print("[CLEANUP] Estado del chat limpiado al cambiar sistema")
+    print("[CLEANUP] Estado del chat limpiado al cambiar sistema - Seemann Group")
 
 if __name__ == "__main__":
     main()
